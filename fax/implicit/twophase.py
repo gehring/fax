@@ -14,7 +14,8 @@ def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
     """
 
     Args:
-        param_func:
+        param_func: A "parametric" operator (i.e., callable) taking in some
+            parameters and returning a function for which we seek a fixed point.
         forward_solver:
         default_rtol:
         default_atol:
