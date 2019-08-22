@@ -117,16 +117,16 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
                                        return_last_two=True)
         return i_new, x_new, x_old
 
-    init_vals = (np.zeros((), np.integer),
-                 init_x,
-                 np.full_like(init_x, np.inf))
+    init_vals = (batched_iter_size,
+                 unrolled(0, init_x, func, batched_iter_size)[1],
+                 init_x)
 
     if unroll:
         if max_batched_iter is None:
             raise ValueError("`max_iter` must be not None when using `unroll`.")
 
         cur_vals = init_vals
-        for _ in range(max_batched_iter):
+        for _ in range(max_batched_iter - 1):
             cur_vals = body(cur_vals)
 
         iterations, sol, prev_sol = cur_vals

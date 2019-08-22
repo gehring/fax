@@ -23,7 +23,7 @@ class CGATest(jax.test_util.JaxTestCase):
         hypothesis.extra.numpy.arrays(
             onp.float, (2, 3), elements=hypothesis.strategies.floats(0., 1)),
     )
-    def SimpleTwoPlayer(self, amat):
+    def testSimpleTwoPlayer(self, amat):
         def f(x, y):
             return x.T @ amat @ y
 

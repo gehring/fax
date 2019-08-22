@@ -133,7 +133,7 @@ def cga_iteration(init_values, step_size, f, g, convergence_test, max_iter,
             size of the last step if desired.
     """
 
-    cga_update = cga.cga(step_size, f, g, linear_op_solver=linear_op_solver)
+    cga_update = cga(step_size, f, g, linear_op_solver=linear_op_solver)
 
     grad_yg = jax.grad(g, 1)
     grad_xf = jax.grad(f, 0)
