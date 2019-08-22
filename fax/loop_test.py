@@ -8,13 +8,14 @@ from fax import converge
 from fax import loop
 from fax import test_util
 
+import jax
 import jax.numpy as np
+from jax import test_util as jtu
 from jax.config import config
 config.update("jax_enable_x64", True)
 
 
-class LoopTest(parameterized.TestCase, absltest.TestCase):
-
+class LoopTest(jtu.JaxTestCase):
     def testFixedPointIteration(self):
         mat_size = 5
         rtol = atol = 1e-10
@@ -126,6 +127,60 @@ class LoopTest(parameterized.TestCase, absltest.TestCase):
 
         testing.assert_array_equal(scan_sol, loop_sol)
 
+    def testJITUnrollFixedpointLoop(self):
+        max_steps = 10
+
+        def step(x):
+            return x - 1
+
+        init_x = np.zeros(())
+
+        @jax.jit
+        def run_unrolled(x):
+            return loop.fixed_point_iteration(
+                init_x=x,
+                func=step,
+                convergence_test=lambda *args: False,
+                max_iter=max_steps,
+                batched_iter_size=1,
+                unroll=True,
+            )
+
+        scan_sol = run_unrolled(init_x)
+
+        @jax.jit
+        def run_loop(x):
+            return loop.fixed_point_iteration(
+                init_x=x,
+                func=step,
+                convergence_test=lambda *args: False,
+                max_iter=max_steps,
+                batched_iter_size=1,
+                unroll=False,
+            )
+        loop_sol = run_loop(init_x)
+
+        testing.assert_array_equal(scan_sol, loop_sol)
+
+    def testUnrollGrad(self):
+        max_steps = 10
+
+        def step(x):
+            return x - 1
+
+        init_x = np.zeros(())
+
+        def run_unrolled(x):
+            return loop.fixed_point_iteration(
+                init_x=x,
+                func=step,
+                convergence_test=lambda *args: False,
+                max_iter=max_steps,
+                batched_iter_size=1,
+                unroll=True,
+            ).value
+        jax.grad(run_unrolled)(init_x)
+
     def testBatchedRaise(self):
         max_steps = 10
 
@@ -167,7 +222,7 @@ class LoopTest(parameterized.TestCase, absltest.TestCase):
         self.assertWarns(UserWarning, none_divisible_batch)
 
     def testNoneMaxIter(self):
-        max_steps = 10
+        max_steps = None
 
         def step(x):
             return x - 1
@@ -211,3 +266,7 @@ class LoopTest(parameterized.TestCase, absltest.TestCase):
         testing.assert_array_equal(batched_x, single_batched_x)
         testing.assert_array_equal(batched_x, loop_x)
         testing.assert_array_equal(batched_x_old, loop_x_old)
+
+
+if __name__ == "__main__":
+    absltest.main()
