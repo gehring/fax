@@ -80,7 +80,7 @@ def solve_grad_ax_b(amat, bvec):
 
 def param_ax_plus_b(params):
     matrix, offset = params
-    return lambda x: ax_plus_b(x, matrix, offset)
+    return lambda i, x: ax_plus_b(x, matrix, offset)
 
 
 class FixedPointTestCase(jax.test_util.JaxTestCase):

@@ -35,7 +35,8 @@ class LoopTest(jax.test_util.JaxTestCase):
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
-        def step(x_old):
+        def step(i, x_old):
+            del i
             return test_util.ax_plus_b(x_old, matrix, offset)
 
         def solve(x):
@@ -74,7 +75,8 @@ class LoopTest(jax.test_util.JaxTestCase):
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
-        def step(x_old):
+        def step(i, x_old):
+            del i
             return x_old + 1
 
         sol = loop.fixed_point_iteration(
@@ -95,7 +97,8 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testBatchedLoop(self, unroll):
         max_steps = 10
 
-        def step(x):
+        def step(i, x):
+            del i
             return x - 1
 
         init_x = np.zeros(())
@@ -130,7 +133,8 @@ class LoopTest(jax.test_util.JaxTestCase):
                 "supports differentiation."))
         max_steps = 10
 
-        def step(x):
+        def step(i, x):
+            del i
             return x - 1
 
         init_x = np.zeros(())
@@ -143,7 +147,8 @@ class LoopTest(jax.test_util.JaxTestCase):
             unroll=unroll,
         )
 
-        fixed_value = loop.unrolled(
+        last_i, fixed_value = loop.unrolled(
+            0,
             init_x=init_x,
             func=step,
             num_iter=5,
@@ -151,11 +156,13 @@ class LoopTest(jax.test_util.JaxTestCase):
         )
 
         self.assertEqual(fixed_value, term_sol.value)
+        self.assertEqual(last_i, term_sol.iterations)
 
     def testUnrollFixedpointLoop(self):
         max_steps = 10
 
-        def step(x):
+        def step(i, x):
+            del i
             return x - 1
 
         init_x = np.zeros(())
@@ -182,7 +189,8 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testJITUnrollFixedpointLoop(self):
         max_steps = 10
 
-        def step(x):
+        def step(i, x):
+            del i
             return x - 1
 
         init_x = np.zeros(())
@@ -221,7 +229,8 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testUnrollGrad(self, jit):
         max_steps = 10
 
-        def step(x):
+        def step(i, x):
+            del i
             return x*0.1
 
         def converge_test(x_new, x_old):
@@ -246,7 +255,8 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testBatchedRaise(self):
         max_steps = 10
 
-        def step(x):
+        def step(i, x):
+            del i
             return x - 1
 
         def neg_batch():
@@ -286,7 +296,8 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testNoneMaxIter(self):
         max_steps = None
 
-        def step(x):
+        def step(i, x):
+            del i
             return x + 1
 
         init_x = np.zeros(())
@@ -303,19 +314,22 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testUnrolledLoop(self):
         max_steps = 11
 
-        def step(x):
+        def step(i, x):
+            del i
             return x - 1
 
         init_x = np.zeros(())
 
-        batched_x, batched_x_old = loop.unrolled(
+        batched_i, batched_x, batched_x_old = loop.unrolled(
+            0,
             init_x=init_x,
             func=step,
             num_iter=max_steps,
             return_last_two=True,
         )
 
-        single_batched_x = loop.unrolled(
+        single_i, single_batched_x = loop.unrolled(
+            0,
             init_x=init_x,
             func=step,
             num_iter=max_steps,
@@ -323,12 +337,15 @@ class LoopTest(jax.test_util.JaxTestCase):
         )
 
         loop_x, loop_x_old = (0., 0.)
-        for _ in range(max_steps):
-            loop_x, loop_x_old = step(loop_x), loop_x
+        for i in range(max_steps):
+            loop_x, loop_x_old = step(i, loop_x), loop_x
 
         testing.assert_array_equal(batched_x, single_batched_x)
         testing.assert_array_equal(batched_x, loop_x)
         testing.assert_array_equal(batched_x_old, loop_x_old)
+
+        self.assertEqual(i + 1, single_i)
+        self.assertEqual(i + 1, batched_i)
 
 
 def _fixedpoint_iteration_solver(unroll,

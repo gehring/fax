@@ -10,7 +10,7 @@ FixedPointSolution = collections.namedtuple(
 )
 
 
-def unrolled(init_x, func, num_iter, return_last_two=False):
+def unrolled(i, init_x, func, num_iter, return_last_two=False):
     """Repeatedly apply a function using a regular python loop.
 
     Args:
@@ -29,12 +29,13 @@ def unrolled(init_x, func, num_iter, return_last_two=False):
 
     for _ in range(num_iter):
         x_old = x
-        x = func(x_old)
+        x = func(i, x_old)
+        i = i + 1
 
     if return_last_two:
-        return x, x_old
+        return i, x, x_old
     else:
-        return x
+        return i, x
 
 
 def fixed_point_iteration(init_x, func, convergence_test, max_iter,
@@ -45,14 +46,15 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
     `func` to a candidate solution. This is done until the solution converges
     or until the maximum number of iterations, `max_iter` is reached.
 
-    NOTE: if the maximum number of iterations is reached, the convergence will
-    not be checked on the final application of `func` and the solution will
-    always be marked as not converged.
+    NOTE: if the maximum number of iterations is reached, the convergence
+    will not be checked on the final application of `func` and the solution
+    will always be marked as not converged when `unroll` is `False`.
 
     Args:
         init_x: The initial values to be used in `func`.
         func (callable): The function for which we want to find a fixed point.
-            `func` should be of type `a -> a` where `a` is the type of `init_x`.
+            `func` should be of type `int, a -> a` where `a` is the type of
+            `init_x` and the integer correspond to the current iteration count.
         convergence_test (callable): A two argument function of type
             `(a, a) -> bool` that takes in the newest solution and the previous
             solution and returns `True` if they have converged. The fixed point
@@ -65,7 +67,12 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
             and to potentially allow for the graph of the unrolled batch to be
             more aggressively optimized.
         unroll (bool): If True, use a normal python while loop, i.e., unrolled
-            ops. This enables back-propagting through the iterations.
+            ops. This enables back-propagating through the iterations.
+
+            NOTE: due to current limitations in `JAX`, when `unroll` is `True`,
+            convergence is ignored and the loop always runs for the maximum
+            number of iterations. Additionally, compilation times can be long
+            when running for a large number of iterations as a result.
 
     Returns:
         FixedPointSolution: A named tuple containing the results of the
@@ -106,11 +113,11 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
 
     def body(args):
         i, x_new, _ = args
-        x_new, x_old = unrolled(x_new, func, batched_iter_size,
-                                return_last_two=True)
-        return i + batched_iter_size, x_new, x_old
+        i_new, x_new, x_old = unrolled(i, x_new, func, batched_iter_size,
+                                       return_last_two=True)
+        return i_new, x_new, x_old
 
-    init_vals = (np.zeros(()),
+    init_vals = (np.zeros((), np.integer),
                  init_x,
                  np.full_like(init_x, np.inf))
 
@@ -119,7 +126,7 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
             raise ValueError("`max_iter` must be not None when using `unroll`.")
 
         cur_vals = init_vals
-        for i in range(max_batched_iter):
+        for _ in range(max_batched_iter):
             cur_vals = body(cur_vals)
 
         iterations, sol, prev_sol = cur_vals

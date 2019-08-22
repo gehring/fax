@@ -1,5 +1,7 @@
+import operator
 import numpy as onp
 
+from jax import tree_util
 import jax.numpy as np
 
 
@@ -46,6 +48,11 @@ def close_or_nan(delta, scale, rtol, atol):
 
 
 def max_diff_test(x_new, x_old, rtol, atol):
-    delta = np.max(np.abs(x_new - x_old))
-    abs_old = np.max(np.abs(x_old))
-    return close_or_nan(delta, abs_old, rtol, atol)
+
+    def check_values(x, y):
+        delta = np.max(np.abs(x - y))
+        abs_old = np.max(np.abs(x))
+        return close_or_nan(delta, abs_old, rtol, atol)
+
+    is_close = tree_util.tree_multimap(check_values, x_new, x_old)
+    return tree_util.tree_reduce(operator.and_, is_close)

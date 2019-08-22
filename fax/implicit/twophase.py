@@ -1,3 +1,4 @@
+from functools import partial
 import logging
 
 import jax
@@ -49,8 +50,8 @@ def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
         forward_solver = default_solver
 
     # define a flat function to fit the vjp API
-    def flat_func(x, params):
-        return param_func(params)(x)
+    def flat_func(i, x, params):
+        return param_func(params)(i, x)
 
     @jax.custom_transforms
     def two_phase_op(init_xs, params):
@@ -63,9 +64,11 @@ def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
         del dconverged, diter, dprev_value, init_xs
         init_dxs = dvalue
 
-        fp_vjp_fn = jax.vjp(flat_func, ans.value, params)[1]
+        fp_vjp_fn = jax.vjp(partial(flat_func, ans.iterations),
+                            ans.value, params)[1]
 
-        def dfp_fn(dout):
+        def dfp_fn(i, dout):
+            del i
             dout = fp_vjp_fn(dout)[0] + dvalue
             return dout
 
