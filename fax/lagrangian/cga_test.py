@@ -21,7 +21,7 @@ class CGATest(jax.test_util.JaxTestCase):
     @hypothesis.settings(max_examples=100, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
-            onp.float, (2, 3), elements=hypothesis.strategies.floats(0., 1)),
+            onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
     )
     def testSimpleTwoPlayer(self, amat):
         def f(x, y):
@@ -31,8 +31,8 @@ class CGATest(jax.test_util.JaxTestCase):
             return -f(x, y)
 
         eta = 0.5
-        rtol = atol = 1e-8
-        max_iter = 5000
+        rtol = atol = 1e-10
+        max_iter = 10000
 
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
@@ -44,7 +44,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         solution = cga.cga_iteration(init_vals, eta, f, g, convergence_test,
                                      max_iter)
-        testing.assert_allclose(jax.tree_map(np.zeros_like, solution.value),
+        testing.assert_allclose(jax.tree_map(onp.zeros_like, solution.value),
                                 solution.value)
 
 

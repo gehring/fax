@@ -44,9 +44,9 @@ def cga(step_size, f, g, linear_op_solver=None, default_max_iter=1000):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
         def default_solver(amat_op, b):
-            loop.fixed_point_iteration(
+            return loop.fixed_point_iteration(
                 init_x=b,
-                func=lambda x: amat_op(x) + b,
+                func=lambda i, x: amat_op(x) + b,
                 convergence_test=default_convergence_test,
                 max_iter=default_max_iter,
             )
