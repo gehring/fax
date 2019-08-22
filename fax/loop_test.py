@@ -225,7 +225,7 @@ class LoopTest(jtu.JaxTestCase):
         max_steps = None
 
         def step(x):
-            return x - 1
+            return x + 1
 
         init_x = np.zeros(())
         loop_sol = loop.fixed_point_iteration(
@@ -236,6 +236,7 @@ class LoopTest(jtu.JaxTestCase):
             batched_iter_size=3,
         )
         self.assertIsNotNone(loop_sol)
+        loop_sol.value.block_until_ready()
 
     def testUnrolledLoop(self):
         max_steps = 11
