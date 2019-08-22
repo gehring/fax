@@ -10,18 +10,25 @@ from fax import test_util
 
 import jax
 import jax.numpy as np
-from jax import test_util as jtu
+import jax.test_util
 from jax.config import config
 config.update("jax_enable_x64", True)
 
 
-class LoopTest(jtu.JaxTestCase):
-    def testFixedPointIteration(self):
+class LoopTest(jax.test_util.JaxTestCase):
+
+    @parameterized.parameters(
+        {"unroll": True, "jit": False},
+        {"unroll": False, "jit": False},
+        {"unroll": True, "jit": True},
+        {"unroll": False, "jit": True},
+    )
+    def testFixedPointIteration(self, unroll, jit):
         mat_size = 5
         rtol = atol = 1e-10
-        max_steps = 5000
+        max_steps = 500
 
-        matrix = test_util.generate_stable_matrix(mat_size, eps=1e-2)
+        matrix = test_util.generate_stable_matrix(mat_size, eps=1e-1)
         offset = onp.random.rand(5)
         init_x = np.zeros_like(offset)
 
@@ -31,23 +38,34 @@ class LoopTest(jtu.JaxTestCase):
         def step(x_old):
             return test_util.ax_plus_b(x_old, matrix, offset)
 
-        sol = loop.fixed_point_iteration(
-            init_x=init_x,
-            func=step,
-            convergence_test=convergence_test,
-            max_iter=max_steps,
-            batched_iter_size=1,
-        )
+        def solve(x):
+            return loop.fixed_point_iteration(
+                init_x=x,
+                func=step,
+                convergence_test=convergence_test,
+                max_iter=max_steps,
+                batched_iter_size=1,
+                unroll=unroll,
+            )
+
+        if jit:
+            solve = jax.jit(solve)
+
+        sol = solve(init_x)
 
         true_sol = test_util.solve_ax_b(matrix, offset)
 
         testing.assert_allclose(sol.value, true_sol, rtol=1e-5, atol=1e-5)
         self.assertTrue(sol.converged)
-        self.assertLess(sol.iterations, max_steps)
+        self.assertLessEqual(sol.iterations, max_steps)
         testing.assert_allclose(sol.value, sol.previous_value, rtol=1e-5,
                                 atol=1e-5)
 
-    def testFixedPointDiverge(self):
+    @parameterized.parameters(
+        {"unroll": True},
+        {"unroll": False},
+    )
+    def testFixedPointDiverge(self, unroll):
         rtol = atol = 1e-10
         max_steps = 10
 
@@ -65,6 +83,7 @@ class LoopTest(jtu.JaxTestCase):
                 convergence_test=convergence_test,
                 max_iter=max_steps,
                 batched_iter_size=1,
+                unroll=unroll,
             )
         self.assertFalse(sol.converged)
         self.assertEqual(sol.iterations, max_steps)
@@ -100,6 +119,39 @@ class LoopTest(jtu.JaxTestCase):
 
         testing.assert_array_equal(batched_sol, loop_sol)
 
+    @parameterized.parameters(
+        {"unroll": True},
+        {"unroll": False},
+    )
+    def testTermination(self, unroll):
+        if unroll:
+            self.skipTest((
+                "Can't terminate early when unrolling until `jax.lax.cond` "
+                "supports differentiation."))
+        max_steps = 10
+
+        def step(x):
+            return x - 1
+
+        init_x = np.zeros(())
+        term_sol = loop.fixed_point_iteration(
+            init_x=init_x,
+            func=step,
+            convergence_test=lambda x, *args: x <= -5,
+            max_iter=max_steps,
+            batched_iter_size=1,
+            unroll=unroll,
+        )
+
+        fixed_value = loop.unrolled(
+            init_x=init_x,
+            func=step,
+            num_iter=5,
+            return_last_two=False,
+        )
+
+        self.assertEqual(fixed_value, term_sol.value)
+
     def testUnrollFixedpointLoop(self):
         max_steps = 10
 
@@ -107,7 +159,7 @@ class LoopTest(jtu.JaxTestCase):
             return x - 1
 
         init_x = np.zeros(())
-        scan_sol = loop.fixed_point_iteration(
+        unroll_sol = loop.fixed_point_iteration(
             init_x=init_x,
             func=step,
             convergence_test=lambda *args: False,
@@ -125,7 +177,7 @@ class LoopTest(jtu.JaxTestCase):
             unroll=False,
         )
 
-        testing.assert_array_equal(scan_sol, loop_sol)
+        testing.assert_array_equal(unroll_sol, loop_sol)
 
     def testJITUnrollFixedpointLoop(self):
         max_steps = 10
@@ -146,7 +198,7 @@ class LoopTest(jtu.JaxTestCase):
                 unroll=True,
             )
 
-        scan_sol = run_unrolled(init_x)
+        unroll_sol = run_unrolled(init_x)
 
         @jax.jit
         def run_loop(x):
@@ -160,25 +212,35 @@ class LoopTest(jtu.JaxTestCase):
             )
         loop_sol = run_loop(init_x)
 
-        testing.assert_array_equal(scan_sol, loop_sol)
+        testing.assert_array_equal(unroll_sol, loop_sol)
 
-    def testUnrollGrad(self):
+    @parameterized.parameters(
+        {"jit": False},
+        {"jit": True},
+    )
+    def testUnrollGrad(self, jit):
         max_steps = 10
 
         def step(x):
-            return x - 1
+            return x*0.1
 
-        init_x = np.zeros(())
+        def converge_test(x_new, x_old):
+            return np.max(x_new - x_old) < 1e-3
+
+        init_x = np.ones(())
 
         def run_unrolled(x):
             return loop.fixed_point_iteration(
                 init_x=x,
                 func=step,
-                convergence_test=lambda *args: False,
+                convergence_test=converge_test,
                 max_iter=max_steps,
                 batched_iter_size=1,
                 unroll=True,
             ).value
+
+        if jit:
+            run_unrolled = jax.jit(run_unrolled)
         jax.grad(run_unrolled)(init_x)
 
     def testBatchedRaise(self):
@@ -267,6 +329,41 @@ class LoopTest(jtu.JaxTestCase):
         testing.assert_array_equal(batched_x, single_batched_x)
         testing.assert_array_equal(batched_x, loop_x)
         testing.assert_array_equal(batched_x_old, loop_x_old)
+
+
+def _fixedpoint_iteration_solver(unroll,
+                                 param_func,
+                                 default_rtol=1e-10,
+                                 default_atol=1e-10,
+                                 default_max_iter=200,
+                                 default_batched_iter_size=1):
+
+        def fixed_point_iteration_solver(init_x, params):
+            rtol, atol = converge.adjust_tol_for_dtype(default_rtol,
+                                                       default_atol,
+                                                       init_x.dtype)
+
+            def convergence_test(x_new, x_old):
+                return converge.max_diff_test(x_new, x_old, rtol, atol)
+
+            func = param_func(params)
+            sol = loop.fixed_point_iteration(
+                init_x=init_x,
+                func=func,
+                convergence_test=convergence_test,
+                max_iter=default_max_iter,
+                batched_iter_size=default_batched_iter_size,
+                unroll=unroll,
+            )
+
+            return sol
+        return fixed_point_iteration_solver
+
+
+class UnrolledFixedPointIterationTest(test_util.FixedPointTestCase):
+
+    def make_solver(self, param_func):
+        return _fixedpoint_iteration_solver(unroll=True, param_func=param_func)
 
 
 if __name__ == "__main__":

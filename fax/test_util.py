@@ -1,6 +1,3 @@
-import abc
-from absl.testing import absltest
-
 import hypothesis.extra.numpy
 
 import numpy as onp
@@ -86,14 +83,13 @@ def param_ax_plus_b(params):
     return lambda x: ax_plus_b(x, matrix, offset)
 
 
-class FixedPointTestCase(abc.ABC, absltest.TestCase):
+class FixedPointTestCase(jax.test_util.JaxTestCase):
 
-    @abc.abstractmethod
     def make_solver(self, param_func):
         del param_func
-        return NotImplemented
+        raise NotImplementedError
 
-    @hypothesis.settings(max_examples=100, deadline=2000.)
+    @hypothesis.settings(max_examples=100, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
             onp.float, (5, 5), elements=hypothesis.strategies.floats(0, 1)),
@@ -101,18 +97,18 @@ class FixedPointTestCase(abc.ABC, absltest.TestCase):
             onp.float, 5, elements=hypothesis.strategies.floats(0, 1)),
     )
     def testSimpleContraction(self, matrix, offset):
-        matrix = make_stable(matrix, eps=1e-2)
+        matrix = make_stable(matrix, eps=1e-1)
         x0 = np.zeros_like(offset)
 
         solver = self.make_solver(param_ax_plus_b)
         self.assertSimpleContraction(solver, x0, matrix, offset)
 
-    @hypothesis.settings(max_examples=100, deadline=2000.)
+    @hypothesis.settings(max_examples=100, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
-            onp.float, (5, 5), elements=hypothesis.strategies.floats(0, 1)),
+            onp.float, (5, 5), elements=hypothesis.strategies.floats(0.1, 1)),
         hypothesis.extra.numpy.arrays(
-            onp.float, 5, elements=hypothesis.strategies.floats(0, 1)),
+            onp.float, 5, elements=hypothesis.strategies.floats(0.1, 1)),
     )
     def testJVP(self, matrix, offset):
         matrix = make_stable(matrix, eps=1e-1)
@@ -135,7 +131,7 @@ class FixedPointTestCase(abc.ABC, absltest.TestCase):
         Test gradient on the fixed point of Ax + b = x.
         """
         mat_size = 10
-        matrix = generate_stable_matrix(mat_size, 1e-2)
+        matrix = generate_stable_matrix(mat_size, 1e-1)
         offset = onp.random.rand(mat_size)
         x0 = np.zeros_like(offset)
 

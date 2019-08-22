@@ -60,7 +60,7 @@ def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
         dvalue, dconverged, diter, dprev_value = g
         # these tensors are returned only for monitoring and have no
         # defined gradient
-        del dconverged, diter, dprev_value
+        del dconverged, diter, dprev_value, init_xs
         init_dxs = dvalue
 
         fp_vjp_fn = jax.vjp(flat_func, ans.value, params)[1]

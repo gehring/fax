@@ -92,6 +92,10 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
             "Argument `batched_iter_size` should be a multiple of `max_iter` "
             "to guarantee that no more than `max_iter` iterations are used."))
 
+    max_batched_iter = None
+    if max_iter is not None:
+        max_batched_iter = max_iter // batched_iter_size
+
     def cond(args):
         i, x_new, x_old = args
         converged = convergence_test(x_new, x_old)
@@ -106,15 +110,20 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
                                 return_last_two=True)
         return i + batched_iter_size, x_new, x_old
 
-    init_vals = (0,
+    init_vals = (np.zeros(()),
                  init_x,
                  np.full_like(init_x, np.inf))
 
     if unroll:
+        if max_batched_iter is None:
+            raise ValueError("`max_iter` must be not None when using `unroll`.")
+
         cur_vals = init_vals
-        while cond(cur_vals):
+        for i in range(max_batched_iter):
             cur_vals = body(cur_vals)
+
         iterations, sol, prev_sol = cur_vals
+        converged = convergence_test(sol, prev_sol)
 
     else:
         iterations, sol, prev_sol = jax.lax.while_loop(
@@ -122,10 +131,11 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
             body,
             init_vals,
         )
+        converged = max_iter is None or iterations < max_iter
 
     return FixedPointSolution(
         value=sol,
-        converged=max_iter is None or iterations < max_iter,
+        converged=converged,
         iterations=iterations,
         previous_value=prev_sol,
     )
