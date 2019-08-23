@@ -42,8 +42,8 @@ class CGATest(jax.test_util.JaxTestCase):
         init_vals = (random.uniform(rng_x, shape=(2,)),
                      random.uniform(rng_y, shape=(3,)))
 
-        solution = cga.cga_iteration(init_vals, eta, f, g, convergence_test,
-                                     max_iter)
+        solution = cga.cga_iteration(init_vals, f, g, convergence_test,
+                                     max_iter, eta)
         testing.assert_allclose(jax.tree_map(onp.zeros_like, solution.value),
                                 solution.value)
 

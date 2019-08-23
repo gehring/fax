@@ -36,7 +36,8 @@ def make_mixed_jvp(f, x, y, reversed=False):
     return _jvp
 
 
-def cga(step_size, f, g, linear_op_solver=None, default_max_iter=1000):
+def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
+        default_max_iter=1000):
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
@@ -52,33 +53,36 @@ def cga(step_size, f, g, linear_op_solver=None, default_max_iter=1000):
             )
         linear_op_solver = default_solver
 
-    step_size = optimizers.make_schedule(step_size)
+    step_size_f = optimizers.make_schedule(step_size_f)
+    step_size_g = optimizers.make_schedule(step_size_g)
 
     def update(i, grads, inputs):
         x, y = inputs
         grad_xf, grad_yg = grads
-        eta = step_size(i)
+        eta_f = step_size_f(i)
+        eta_g = step_size_g(i)
 
         jvp_xyf = make_mixed_jvp(f, x, y)
         jvp_yxg = make_mixed_jvp(g, x, y, reversed=True)
 
-        bx = grad_xf - eta * jvp_xyf(grad_yg)
-        deltax = -linear_op_solver(lambda x: (eta ** 2) * jvp_xyf(jvp_yxg(x)),
+        bx = grad_xf - eta_f * jvp_xyf(grad_yg)
+        deltax = -linear_op_solver(lambda x: (eta_f ** 2) * jvp_xyf(jvp_yxg(x)),
                                    bx).value
 
-        by = grad_yg - eta * jvp_yxg(grad_xf)
-        deltay = -linear_op_solver(lambda x: (eta ** 2) * jvp_yxg(jvp_xyf(x)),
+        by = grad_yg - eta_g * jvp_yxg(grad_xf)
+        deltay = -linear_op_solver(lambda x: (eta_g ** 2) * jvp_yxg(jvp_xyf(x)),
                                    by).value
 
-        x = x + eta * deltax
-        y = y + eta * deltay
+        x = x + eta_f * deltax
+        y = y + eta_g * deltay
         return x, y
 
     return update
 
 
-def cga_iteration(init_values, step_size, f, g, convergence_test, max_iter,
-                  linear_op_solver=None, batched_iter_size=1, unroll=False):
+def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
+                  step_size_g=None, linear_op_solver=None, batched_iter_size=1,
+                  unroll=False):
     """Run competitive gradient ascent until convergence or some max iteration.
 
     Use this function to find a fixed point of the competitive gradient
@@ -93,8 +97,6 @@ def cga_iteration(init_values, step_size, f, g, convergence_test, max_iter,
     Args:
         init_values: a tuple of type `(a, b)` corresponding to the types
             accepted by `f` and `g`.
-        step_size: The step size used by CGA. This can be a scalar or a
-            callable taking in the current iteration and returning a scalar.
         f (callable): The function we which to maximize with type
             `a, b -> float`.
         g (callable): The "opposing" function which is also maximized with type
@@ -104,6 +106,13 @@ def cga_iteration(init_values, step_size, f, g, convergence_test, max_iter,
             previous solution and returns `True` if they have converged. The
             optimization will stop and return when `True` is returned.
         max_iter (int or None): The maximum number of iterations.
+        step_size_f: The step size used by CGA for `f`. This can be a scalar or
+            a callable taking in the current iteration and returning a scalar.
+            If no step size is given for `g`, then `step_size_f` is also used
+            for `g`.
+        step_size_f (optional): The step size used by CGA for `g`. Like
+            `step_size_f`, this can be a scalar or a callable. If no step size
+            is given for `g`, then `step_size_f` is used.
         linear_op_solver (callable, optional): This is a function which outputs
             the solution to `x = Ax + b` when given a callable linear operator
             representing the matrix-vector product `Ax` and an array `b`. If
@@ -133,7 +142,13 @@ def cga_iteration(init_values, step_size, f, g, convergence_test, max_iter,
             size of the last step if desired.
     """
 
-    cga_update = cga(step_size, f, g, linear_op_solver=linear_op_solver)
+    cga_update = cga(
+        step_size_f=step_size_f,
+        step_size_g=step_size_g or step_size_f,
+        f=f,
+        g=g,
+        linear_op_solver=linear_op_solver,
+    )
 
     grad_yg = jax.grad(g, 1)
     grad_xf = jax.grad(f, 0)
