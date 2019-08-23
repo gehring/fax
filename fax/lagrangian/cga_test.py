@@ -9,21 +9,66 @@ from fax import converge
 from fax.lagrangian import cga
 
 import jax
+import jax.numpy as np
 from jax import random
 import jax.test_util
 
 from jax.config import config
 config.update("jax_enable_x64", True)
+config.update("jax_debug_nans", True)
 
 
 class CGATest(jax.test_util.JaxTestCase):
+
+    # @hypothesis.settings(max_examples=100, deadline=5000.)
+    # @hypothesis.given(
+    #     hypothesis.extra.numpy.arrays(
+    #         onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
+    # )
+    def testCGASimpleTwoPlayer(self, amat=onp.full((2, 3), 0.1)):
+        def f(x, y):
+            return x.T @ amat @ y
+
+        def g(x, y):
+            return -f(x, y)
+
+        eta = 0.5
+        num_iter = 100000
+
+        rng = random.PRNGKey(42)
+        rng_x, rng_y = random.split(rng)
+        init_vals = (random.uniform(rng_x, shape=(2,)),
+                     random.uniform(rng_y, shape=(3,)))
+
+        cga_init, cga_update, get_params = cga.cga(
+            step_size_f=eta,
+            step_size_g=eta,
+            f=f,
+            g=g,
+        )
+        grad_yg = jax.grad(g, 1)
+        grad_xf = jax.grad(f, 0)
+
+        @jax.jit
+        def step(i, opt_state):
+            x, y = get_params(opt_state)[:2]
+            grads = (grad_xf(x, y), grad_yg(x, y))
+            return cga_update(i, grads, opt_state)
+
+        opt_state = cga_init(init_vals)
+        for i in range(num_iter):
+            opt_state = step(i, opt_state)
+
+        final_values = get_params(opt_state)[:2]
+        self.assertAllClose(jax.tree_map(np.zeros_like, final_values),
+                            final_values, check_dtypes=True)
 
     @hypothesis.settings(max_examples=100, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
             onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
     )
-    def testSimpleTwoPlayer(self, amat):
+    def testCGAIterationSimpleTwoPlayer(self, amat):
         def f(x, y):
             return x.T @ amat @ y
 
@@ -44,8 +89,8 @@ class CGATest(jax.test_util.JaxTestCase):
 
         solution = cga.cga_iteration(init_vals, f, g, convergence_test,
                                      max_iter, eta)
-        testing.assert_allclose(jax.tree_map(onp.zeros_like, solution.value),
-                                solution.value)
+        self.assertAllClose(jax.tree_map(np.zeros_like, solution.value),
+                            solution.value, check_dtypes=True)
 
 
 if __name__ == "__main__":
