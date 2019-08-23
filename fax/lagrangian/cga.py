@@ -6,7 +6,6 @@ from jax.experimental import optimizers
 
 from fax import converge
 from fax import loop
-from fax.loop import FixedPointSolution
 
 CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
 

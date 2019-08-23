@@ -10,8 +10,8 @@ from fax.lagrangian import cga
 
 import jax
 from jax import random
-import jax.numpy as np
 import jax.test_util
+
 from jax.config import config
 config.update("jax_enable_x64", True)
 
