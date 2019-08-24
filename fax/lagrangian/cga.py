@@ -45,6 +45,7 @@ def make_mixed_hessian(d, first_args, second_args):
 
 
 def full_solve_cga(step_size_f, step_size_g, f, g):
+    """CGA using a naive implementation which build the full hessians."""
     step_size_f = optimizers.make_schedule(step_size_f)
     step_size_g = optimizers.make_schedule(step_size_g)
 
@@ -102,12 +103,12 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
                                                        x_new.dtype)
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
-        def default_solver(amat_op, b, init_x=None):
+        def default_solver(linear_op, bvec, init_x=None):
             if init_x is None:
-                init_x = b
+                init_x = bvec
             return loop.fixed_point_iteration(
                 init_x=init_x,
-                func=lambda i, x: amat_op(x) + b,
+                func=lambda i, x: linear_op(x) + bvec,
                 convergence_test=default_convergence_test,
                 max_iter=default_max_iter,
             )
@@ -141,14 +142,14 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
         bx = grad_xf + eta_f * jvp_xyf(grad_yg)
         delta_x = linear_op_solver(
-            amat_op=lambda x: (eta_f ** 2) * jvp_xyf(jvp_yxg(x)),
-            b=bx,
+            linear_op=lambda x: (eta_f ** 2) * jvp_xyf(jvp_yxg(x)),
+            bvec=bx,
             init_x=delta_x).value
 
         by = grad_yg + eta_g * jvp_yxg(grad_xf)
         delta_y = linear_op_solver(
-            amat_op=lambda x: (eta_g ** 2) * jvp_yxg(jvp_xyf(x)),
-            b=by,
+            linear_op=lambda x: (eta_g ** 2) * jvp_yxg(jvp_xyf(x)),
+            bvec=by,
             init_x=delta_y).value
 
         x = x + eta_f * delta_x
@@ -163,7 +164,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
 def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
                   step_size_g=None, linear_op_solver=None, batched_iter_size=1,
-                  unroll=False):
+                  unroll=False, use_full_matrix=False):
     """Run competitive gradient ascent until convergence or some max iteration.
 
     Use this function to find a fixed point of the competitive gradient
@@ -204,13 +205,18 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             larger than 1 to reduce the number of times convergence is checked
             and to potentially allow for the graph of the unrolled batch to be
             more aggressively optimized.
-        unroll (bool): If True, use a normal python while loop, i.e., unrolled
-            ops. This enables back-propagating through the iterations.
+        unroll (bool, optional): If True, use a normal python while loop, i.e.,
+            unrolled ops. This enables back-propagating through the iterations.
 
             NOTE: due to current limitations in `JAX`, when `unroll` is `True`,
             convergence is ignored and the loop always runs for the maximum
             number of iterations. Additionally, compilation times can be long
             when running for a large number of iterations as a result.
+        use_full_matrix (bool, optional): Use a CGA implementation which uses
+            full hessians instead of potentially more efficient jacobian-vector
+            products. This is useful for debugging and might provide a small
+            performance boost when the dimensions are small. If set to True,
+            then, if provided, the `linear_op_solver` is ignored.
 
     Returns:
         FixedPointSolution: A named tuple containing the results of the
@@ -223,13 +229,21 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             size of the last step if desired.
     """
 
-    cga_init, cga_update, get_params = cga(
-        step_size_f=step_size_f,
-        step_size_g=step_size_g or step_size_f,
-        f=f,
-        g=g,
-        linear_op_solver=linear_op_solver,
-    )
+    if use_full_matrix:
+        cga_init, cga_update, get_params = full_solve_cga(
+            step_size_f=step_size_f,
+            step_size_g=step_size_g or step_size_f,
+            f=f,
+            g=g,
+        )
+    else:
+        cga_init, cga_update, get_params = cga(
+            step_size_f=step_size_f,
+            step_size_g=step_size_g or step_size_f,
+            f=f,
+            g=g,
+            linear_op_solver=linear_op_solver,
+        )
 
     grad_yg = jax.grad(g, 1)
     grad_xf = jax.grad(f, 0)

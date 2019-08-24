@@ -6,6 +6,7 @@ import hypothesis.extra.numpy
 import numpy as onp
 
 from fax import converge
+from fax.lagrangian import cg
 from fax.lagrangian import cga
 
 import jax
@@ -20,31 +21,36 @@ config.update("jax_debug_nans", True)
 
 class CGATest(jax.test_util.JaxTestCase):
 
-    # @hypothesis.settings(max_examples=100, deadline=5000.)
-    # @hypothesis.given(
-    #     hypothesis.extra.numpy.arrays(
-    #         onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
-    # )
     @parameterized.parameters(
-        {"fullmatrix": True},
-        {"fullmatrix": False},
+        {"fullmatrix": False, "conj_grad": True},
+        {"fullmatrix": False, "conj_grad": False},
+        {"fullmatrix": True, "conj_grad": False},
     )
-    def testCGASimpleTwoPlayer(self, fullmatrix, amat=onp.full((2, 3), 0.1)):
-        amat = amat + np.eye(2, 3)
+    @hypothesis.settings(max_examples=100, deadline=5000.)
+    @hypothesis.given(
+        hypothesis.extra.numpy.arrays(
+            onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
+    )
+    def testCGASimpleTwoPlayer(self, fullmatrix, conj_grad, amat):
+        amat = amat + np.eye(*amat.shape)
 
         def f(x, y):
-            return x.T @ amat @ y
+            return x.T @ amat @ y + np.dot(y, y)
 
         def g(x, y):
             return -f(x, y)
 
+        linear_op_solver = None
+        if conj_grad:
+            linear_op_solver = cg.conjugate_gradient_solve
+
         eta = 0.1
-        num_iter = 10000
+        num_iter = 3000
 
         rng = random.PRNGKey(42)
         rng_x, rng_y = random.split(rng)
-        init_vals = (random.uniform(rng_x, shape=(2,)),
-                     random.uniform(rng_y, shape=(3,)))
+        init_vals = (random.uniform(rng_x, shape=(amat.shape[0],)),
+                     random.uniform(rng_y, shape=(amat.shape[1],)))
 
         if fullmatrix:
             cga_init, cga_update, get_params = cga.full_solve_cga(
@@ -59,6 +65,7 @@ class CGATest(jax.test_util.JaxTestCase):
                 step_size_g=eta,
                 f=f,
                 g=g,
+                linear_op_solver=linear_op_solver,
             )
         grad_yg = jax.grad(g, 1)
         grad_xf = jax.grad(f, 0)
@@ -73,40 +80,48 @@ class CGATest(jax.test_util.JaxTestCase):
         for i in range(num_iter):
             opt_state = step(i, opt_state)
 
-        # [-0.03819215 -0.03819215  0.45830577]
-
         final_values = get_params(opt_state)[:2]
         self.assertAllClose(jax.tree_map(np.zeros_like, final_values),
                             final_values, check_dtypes=True)
 
+    @parameterized.parameters(
+        {"fullmatrix": False, "conj_grad": True},
+        {"fullmatrix": False, "conj_grad": False},
+        {"fullmatrix": True, "conj_grad": False},
+    )
     @hypothesis.settings(max_examples=100, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
             onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
     )
-    def testCGAIterationSimpleTwoPlayer(self, amat):
-        self.skipTest("until cga is fixed")
-        amat = amat + np.eye(2, 3)
+    def testCGAIterationSimpleTwoPlayer(self, fullmatrix, conj_grad, amat):
+        self.skipTest("a")
+        amat = amat + np.eye(*amat.shape)
+
         def f(x, y):
-            return x.T @ amat @ y
+            return x.T @ amat @ y + np.dot(y, y)
 
         def g(x, y):
             return -f(x, y)
 
-        eta = 0.5
-        rtol = atol = 1e-10
-        max_iter = 10000
+        eta = 0.1
+        rtol = atol = 1e-7
+        max_iter = 3000
 
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
+        linear_op_solver = None
+        if conj_grad:
+            linear_op_solver = cg.conjugate_gradient_solve
         rng = random.PRNGKey(42)
         rng_x, rng_y = random.split(rng)
-        init_vals = (random.uniform(rng_x, shape=(2,)),
-                     random.uniform(rng_y, shape=(3,)))
+        init_vals = (random.uniform(rng_x, shape=(amat.shape[0],)),
+                     random.uniform(rng_y, shape=(amat.shape[1],)))
 
         solution = cga.cga_iteration(init_vals, f, g, convergence_test,
-                                     max_iter, eta)
+                                     max_iter, eta, use_full_matrix=fullmatrix,
+                                     linear_op_solver=linear_op_solver)
         self.assertAllClose(jax.tree_map(np.zeros_like, solution.value),
                             solution.value, check_dtypes=True)
 
