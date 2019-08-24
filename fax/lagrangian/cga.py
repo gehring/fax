@@ -39,12 +39,67 @@ def make_mixed_jvp(f, x, y, reversed=False):
     return _jvp
 
 
+def make_mixed_hessian(d, first_args, second_args):
+    gradfun = jax.grad(d, argnums=first_args)
+    return jax.jacfwd(gradfun, argnums=second_args)
+
+
+def full_solve_cga(step_size_f, step_size_g, f, g):
+    step_size_f = optimizers.make_schedule(step_size_f)
+    step_size_g = optimizers.make_schedule(step_size_g)
+
+    def init(inputs):
+        return CGAState(
+            x=inputs[0],
+            y=inputs[1],
+            delta_x=np.zeros_like(inputs[0]),
+            delta_y=np.zeros_like(inputs[1]),
+        )
+
+    def update(i, grads, inputs):
+        if len(inputs) < 4:
+            x, y = inputs
+            delta_x = None
+            delta_y = None
+        else:
+            x, y, delta_x, delta_y = inputs
+
+        grad_xf, grad_yg = grads
+        eta_f = step_size_f(i)
+        eta_g = step_size_g(i)
+
+        Dxyf = make_mixed_hessian(f, 0, 1)(x, y)
+        Dyxg = make_mixed_hessian(g, 1, 0)(x, y)
+
+        bx = grad_xf + eta_f * np.dot(Dxyf, grad_yg)
+        delta_x = np.linalg.solve(
+            np.eye(x.shape[0]) - eta_f**2 * np.dot(Dxyf, Dyxg),
+            bx,
+        )
+
+        by = grad_yg + eta_g * np.dot(Dyxg, grad_xf)
+        delta_y = np.linalg.solve(
+            np.eye(y.shape[0]) - eta_g**2 * np.dot(Dyxg, Dxyf),
+            by,
+        )
+
+        x = x + eta_f * delta_x
+        y = y + eta_g * delta_y
+        return CGAState(x, y, delta_x, delta_y)
+
+    def get_params(state):
+        return state[:2]
+
+    return init, update, get_params
+
+
 def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         default_max_iter=1000):
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
-            rtol, atol = converge.adjust_tol_for_dtype(1e-6, 1e-6, x_new.dtype)
+            rtol, atol = converge.adjust_tol_for_dtype(1e-10, 1e-10,
+                                                       x_new.dtype)
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
         def default_solver(amat_op, b, init_x=None):
@@ -84,14 +139,14 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         jvp_xyf = make_mixed_jvp(f, x, y)
         jvp_yxg = make_mixed_jvp(g, x, y, reversed=True)
 
-        bx = grad_xf - eta_f * jvp_xyf(grad_yg)
-        delta_x = -linear_op_solver(
+        bx = grad_xf + eta_f * jvp_xyf(grad_yg)
+        delta_x = linear_op_solver(
             amat_op=lambda x: (eta_f ** 2) * jvp_xyf(jvp_yxg(x)),
             b=bx,
             init_x=delta_x).value
 
-        by = grad_yg - eta_g * jvp_yxg(grad_xf)
-        delta_y = -linear_op_solver(
+        by = grad_yg + eta_g * jvp_yxg(grad_xf)
+        delta_y = linear_op_solver(
             amat_op=lambda x: (eta_g ** 2) * jvp_yxg(jvp_xyf(x)),
             b=by,
             init_x=delta_y).value
