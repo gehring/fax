@@ -16,7 +16,7 @@ import jax.test_util
 
 from jax.config import config
 config.update("jax_enable_x64", True)
-config.update("jax_debug_nans", True)
+# config.update("jax_debug_nans", True)
 
 
 class CGATest(jax.test_util.JaxTestCase):
@@ -42,7 +42,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         linear_op_solver = None
         if conj_grad:
-            linear_op_solver = cg.conjugate_gradient_solve
+            linear_op_solver = cg.fixed_point_solve
 
         eta = 0.1
         num_iter = 3000
@@ -95,7 +95,8 @@ class CGATest(jax.test_util.JaxTestCase):
             onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
     )
     def testCGAIterationSimpleTwoPlayer(self, fullmatrix, conj_grad, amat):
-        self.skipTest("a")
+        amat = np.array([[0.32651018, 0.1, 0.32651018],
+                         [0.32651018, 0.32651018, 0.32651018]])
         amat = amat + np.eye(*amat.shape)
 
         def f(x, y):
@@ -113,7 +114,8 @@ class CGATest(jax.test_util.JaxTestCase):
 
         linear_op_solver = None
         if conj_grad:
-            linear_op_solver = cg.conjugate_gradient_solve
+            linear_op_solver = cg.fixed_point_solve
+
         rng = random.PRNGKey(42)
         rng_x, rng_y = random.split(rng)
         init_vals = (random.uniform(rng_x, shape=(amat.shape[0],)),

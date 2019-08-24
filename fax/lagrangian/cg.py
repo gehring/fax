@@ -30,6 +30,7 @@ def conjugate_gradient_solve(linear_op, bvec, init_x, max_iter=1000,
     init_r_sqr = np.dot(init_r, init_r)
 
     def convergence_test(state_new, state_old):
+        del state_old
         return state_new[2] < atol
 
     solution = loop.fixed_point_iteration(
@@ -41,4 +42,15 @@ def conjugate_gradient_solve(linear_op, bvec, init_x, max_iter=1000,
     return solution._replace(
         value=solution.value[0],
         previous_value=solution.value[0],
+    )
+
+
+def fixed_point_solve(linear_op, bvec, init_x, max_iter=1000,
+                      atol=1e-10):
+    return conjugate_gradient_solve(
+        linear_op=lambda x: x - linear_op(x),
+        bvec=bvec,
+        init_x=init_x,
+        max_iter=max_iter,
+        atol=atol,
     )
