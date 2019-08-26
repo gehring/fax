@@ -140,15 +140,15 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         jvp_xyf = make_mixed_jvp(f, x, y)
         jvp_yxg = make_mixed_jvp(g, x, y, reversed=True)
 
-        bx = grad_xf + eta_f * jvp_xyf(grad_yg)
+        bx = grad_xf + eta_g * jvp_xyf(grad_yg)
         delta_x = linear_op_solver(
-            linear_op=lambda x: (eta_f ** 2) * jvp_xyf(jvp_yxg(x)),
+            linear_op=lambda x: (eta_g * eta_f) * jvp_xyf(jvp_yxg(x)),
             bvec=bx,
             init_x=delta_x).value
 
-        by = grad_yg + eta_g * jvp_yxg(grad_xf)
+        by = grad_yg + eta_f * jvp_yxg(grad_xf)
         delta_y = linear_op_solver(
-            linear_op=lambda x: (eta_g ** 2) * jvp_yxg(jvp_xyf(x)),
+            linear_op=lambda x: (eta_g * eta_f) * jvp_yxg(jvp_xyf(x)),
             bvec=by,
             init_x=delta_y).value
 
