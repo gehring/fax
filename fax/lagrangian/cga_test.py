@@ -16,7 +16,6 @@ import jax.test_util
 
 from jax.config import config
 config.update("jax_enable_x64", True)
-# config.update("jax_debug_nans", True)
 
 
 class CGATest(jax.test_util.JaxTestCase):
@@ -79,8 +78,11 @@ class CGATest(jax.test_util.JaxTestCase):
         opt_state = cga_init(init_vals)
         for i in range(num_iter):
             opt_state = step(i, opt_state)
+            if (np.linalg.norm(opt_state[2]) < 1e-8
+                    and np.linalg.norm(opt_state[3]) < 1e-8):
+                break
 
-        final_values = get_params(opt_state)[:2]
+        final_values = get_params(opt_state)
         self.assertAllClose(jax.tree_map(np.zeros_like, final_values),
                             final_values, check_dtypes=True)
 
@@ -95,8 +97,6 @@ class CGATest(jax.test_util.JaxTestCase):
             onp.float, (2, 3), elements=hypothesis.strategies.floats(0.1, 1)),
     )
     def testCGAIterationSimpleTwoPlayer(self, fullmatrix, conj_grad, amat):
-        amat = np.array([[0.32651018, 0.1, 0.32651018],
-                         [0.32651018, 0.32651018, 0.32651018]])
         amat = amat + np.eye(*amat.shape)
 
         def f(x, y):
@@ -106,7 +106,7 @@ class CGATest(jax.test_util.JaxTestCase):
             return -f(x, y)
 
         eta = 0.1
-        rtol = atol = 1e-7
+        rtol = atol = 1e-8
         max_iter = 3000
 
         def convergence_test(x_new, x_old):
