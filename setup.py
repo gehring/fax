@@ -1,12 +1,11 @@
-from setuptools import setup, find_namespace_packages
+from setuptools import setup, find_packages
 
 install_requires = ['numpy', 'scipy', 'absl-py', 'jax', 'jaxlib']
 
 setup(
     name='fax',
     version='0.0.1',
-    packages=find_namespace_packages(
-        include=["fax.*"],
+    packages=find_packages(
         exclude=["*.tests", "*.tests.*", "tests.*", "tests"]
     ),
     url='',
