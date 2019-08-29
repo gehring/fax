@@ -3,8 +3,8 @@ import logging
 
 import jax
 
-from .. import converge
-from .. import loop
+from fax import converge
+from fax import loop
 
 logger = logging.getLogger(__name__)
 
