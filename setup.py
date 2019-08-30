@@ -4,8 +4,9 @@ install_requires = ['numpy', 'scipy', 'absl-py', 'jax', 'jaxlib']
 
 setup(
     name='fax',
-    version='0.0.1',
+    version='0.0.2',
     packages=find_namespace_packages(
+        include=['*', 'fax.*'],
         exclude=["*.tests", "*.tests.*", "tests.*", "tests"]
     ),
     url='',
