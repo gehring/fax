@@ -54,7 +54,7 @@ def conjugate_gradient_solve(linear_op, bvec, init_x, max_iter=1000,
 def fixed_point_solve(linear_op, bvec, init_x, max_iter=1000,
                       atol=1e-10):
     return conjugate_gradient_solve(
-        linear_op=lambda x: x - linear_op(x),
+        linear_op=lambda x: tree_util.tree_multimap(lax.sub, x, linear_op(x)),
         bvec=bvec,
         init_x=init_x,
         max_iter=max_iter,

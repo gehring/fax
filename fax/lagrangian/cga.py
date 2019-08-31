@@ -1,6 +1,8 @@
 import collections
 
 import jax
+from jax import lax
+from jax import tree_util
 import jax.numpy as np
 from jax.experimental import optimizers
 
@@ -99,16 +101,21 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
-            rtol, atol = converge.adjust_tol_for_dtype(1e-10, 1e-10,
-                                                       x_new.dtype)
+            min_type = converge.tree_smallest_float(x_new)
+            rtol, atol = converge.adjust_tol_for_dtype(1e-10, 1e-10, min_type)
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
         def default_solver(linear_op, bvec, init_x=None):
             if init_x is None:
                 init_x = bvec
+
+            def _step_default_solver(i, x):
+                del i
+                return tree_util.tree_multimap(lax.add, linear_op(x), bvec)
+
             return loop.fixed_point_iteration(
                 init_x=init_x,
-                func=lambda i, x: linear_op(x) + bvec,
+                func=_step_default_solver,
                 convergence_test=default_convergence_test,
                 max_iter=default_max_iter,
             )
@@ -118,11 +125,12 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
     step_size_g = optimizers.make_schedule(step_size_g)
 
     def init(inputs):
+        delta_x, delta_y = tree_util.tree_map(np.zeros_like, inputs)
         return CGAState(
             x=inputs[0],
             y=inputs[1],
-            delta_x=np.zeros_like(inputs[0]),
-            delta_y=np.zeros_like(inputs[1]),
+            delta_x=delta_x,
+            delta_y=delta_y,
         )
 
     def update(i, grads, inputs):
@@ -134,26 +142,45 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
             x, y, delta_x, delta_y = inputs
 
         grad_xf, grad_yg = grads
+
         eta_f = step_size_f(i)
         eta_g = step_size_g(i)
+        eta_fg = eta_g * eta_f
 
         jvp_xyf = make_mixed_jvp(f, x, y)
         jvp_yxg = make_mixed_jvp(g, x, y, reversed=True)
 
-        bx = grad_xf + eta_g * jvp_xyf(grad_yg)
+        def linear_op_x(x):
+            return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
+
+        def linear_op_y(y):
+            return tree_util.tree_map(lambda v: eta_fg * v, jvp_yxg(jvp_xyf(y)))
+
+        bx = tree_util.tree_multimap(
+            lambda grad_xf, z: grad_xf + eta_g * z,
+            grad_xf,
+            jvp_xyf(grad_yg),
+        )
+
         delta_x = linear_op_solver(
-            linear_op=lambda x: (eta_g * eta_f) * jvp_xyf(jvp_yxg(x)),
+            linear_op=linear_op_x,
             bvec=bx,
             init_x=delta_x).value
 
-        by = grad_yg + eta_f * jvp_yxg(grad_xf)
+        by = tree_util.tree_multimap(
+            lambda z, grad_yg: grad_yg + eta_f * z,
+            jvp_yxg(grad_xf), grad_yg
+        )
+
         delta_y = linear_op_solver(
-            linear_op=lambda x: (eta_g * eta_f) * jvp_yxg(jvp_xyf(x)),
+            linear_op=linear_op_y,
             bvec=by,
             init_x=delta_y).value
 
-        x = x + eta_f * delta_x
-        y = y + eta_g * delta_y
+        x = tree_util.tree_multimap(lambda x, delta_x: x + eta_f * delta_x,
+                                    x, delta_x)
+        y = tree_util.tree_multimap(lambda y, delta_y: y + eta_g * delta_y,
+                                    y, delta_y)
         return CGAState(x, y, delta_x, delta_y)
 
     def get_params(state):
