@@ -2,15 +2,9 @@ from functools import partial
 
 from jax import lax
 from jax import tree_util
-import jax.numpy as np
 
-from fax import converge
 from fax import loop
-
-
-def _tuple_dot(x, y):
-    partial_dot = tree_util.tree_multimap(np.dot, x, y)
-    return tree_util.tree_reduce(lax.add, partial_dot)
+from fax import math
 
 
 def cg_step(a_lin_op, i, current_state):
@@ -18,12 +12,12 @@ def cg_step(a_lin_op, i, current_state):
     x, r, r_sqr, p = current_state
     amat_p = a_lin_op(p)
 
-    alpha = r_sqr/_tuple_dot(p, amat_p)
+    alpha = r_sqr / math.pytree_dot(p, amat_p)
     x_new = tree_util.tree_multimap(lambda x, p: x + alpha * p, x, p)
     r_new = tree_util.tree_multimap(lambda r, amat_p: r - alpha * amat_p,
                                     r, amat_p)
 
-    r_new_sqr = _tuple_dot(r_new, r_new)
+    r_new_sqr = math.pytree_dot(r_new, r_new)
     beta = r_new_sqr/r_sqr
     p_new = tree_util.tree_multimap(lambda r_new, p: r_new + beta * p, r_new, p)
     return x_new, r_new, r_new_sqr, p_new
@@ -33,7 +27,7 @@ def conjugate_gradient_solve(linear_op, bvec, init_x, max_iter=1000,
                              atol=1e-10):
     init_r = tree_util.tree_multimap(lax.sub, bvec, linear_op(init_x))
     init_p = init_r
-    init_r_sqr = _tuple_dot(init_r, init_r)
+    init_r_sqr = math.pytree_dot(init_r, init_r)
 
     def convergence_test(state_new, state_old):
         del state_old
