@@ -6,6 +6,8 @@ from numpy import testing
 import jax
 import jax.numpy as np
 import jax.test_util
+import jax.scipy
+from jax.experimental import stax
 
 
 def generate_stable_matrix(size, eps=1e-2):
@@ -157,3 +159,16 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
                                 rtol=1e-5, atol=1e-5)
         testing.assert_allclose(grad_offset, true_grad_offset,
                                 rtol=1e-5, atol=1e-5)
+
+
+def constrained_opt_problem(n):
+    def func(params):
+        return params[0]
+
+    def equality_constraints(params):
+        return np.sum(params**2) - 1
+
+    optimal_solution = np.array([1.] + [0.]*(n-1))
+
+    optimal_value = -1.
+    return func, equality_constraints, optimal_solution, optimal_value
