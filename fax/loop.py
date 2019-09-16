@@ -125,11 +125,15 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
         if max_batched_iter is None:
             raise ValueError("`max_iter` must be not None when using `unroll`.")
 
-        cur_vals = init_vals
-        for _ in range(max_batched_iter - 1):
-            cur_vals = body(cur_vals)
+        def scan_step(args, idx):
+            del idx
+            return body(args), None
 
-        iterations, sol, prev_sol = cur_vals
+        (iterations, sol, prev_sol), _ = jax.lax.scan(
+            f=scan_step,
+            init=init_vals,
+            xs=np.arange(max_batched_iter - 1),
+        )
         converged = convergence_test(sol, prev_sol)
 
     else:

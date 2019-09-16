@@ -248,9 +248,10 @@ class LoopTest(jax.test_util.JaxTestCase):
                 unroll=True,
             ).value
 
+        grad_fun = jax.grad(run_unrolled)
         if jit:
-            run_unrolled = jax.jit(run_unrolled)
-        jax.grad(run_unrolled)(init_x)
+            grad_fun = jax.jit(grad_fun)
+        grad_fun(init_x)
 
     def testBatchedRaise(self):
         max_steps = 10
