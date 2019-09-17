@@ -36,10 +36,7 @@ def make_mixed_jvp(f, x, y, reversed=False):
         def frozen_grad(x):
             return gradfun(x, y)
 
-    def _jvp(v):
-        return jax.jvp(frozen_grad, (given,), (v,))[1]
-
-    return _jvp
+    return jax.linearize(frozen_grad, given)[1]
 
 
 def make_mixed_hessian(d, first_args, second_args):
