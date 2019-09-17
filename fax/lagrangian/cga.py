@@ -19,7 +19,8 @@ def make_mixed_jvp(f, x, y, reversed=False):
         f (callable): Binary callable with signature f(x,y)
         x (numpy.ndarray): First argument to f
         y (numpy.ndarray): Second argument to f
-        reversed (bool, optional): Take Dyx if False, Dxy if True. Defaults to False.
+        reversed (bool, optional): Take Dyx if False, Dxy if True. Defaults to
+            False.
     Returns:
         callable: Unary callable 'jvp(v)' taking a numpy.ndarray as input.
     """
