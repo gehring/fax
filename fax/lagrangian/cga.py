@@ -1,4 +1,5 @@
 import collections
+from functools import partial
 
 import jax
 from jax import lax
@@ -58,7 +59,7 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
             delta_y=np.zeros_like(inputs[1]),
         )
 
-    def update(i, grads, inputs):
+    def update(i, grads, inputs, *args, **kwargs):
         if len(inputs) < 4:
             x, y = inputs
             delta_x = None
@@ -70,8 +71,8 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
         eta_f = step_size_f(i)
         eta_g = step_size_g(i)
 
-        Dxyf = make_mixed_hessian(f, 0, 1)(x, y)
-        Dyxg = make_mixed_hessian(g, 1, 0)(x, y)
+        Dxyf = make_mixed_hessian(partial(f, *args, **kwargs), 0, 1)(x, y)
+        Dyxg = make_mixed_hessian(partial(g, *args, **kwargs), 1, 0)(x, y)
 
         bx = grad_xf + eta_f * np.dot(Dxyf, grad_yg)
         delta_x = np.linalg.solve(
@@ -132,7 +133,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
             delta_y=delta_y,
         )
 
-    def update(i, grads, inputs):
+    def update(i, grads, inputs, *args, **kwargs):
         if len(inputs) < 4:
             x, y = inputs
             delta_x = None
