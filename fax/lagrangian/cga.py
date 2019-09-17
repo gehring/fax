@@ -301,11 +301,14 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
 def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
                      linear_op_solver=None):
 
+    def neg_lagrangian(*args, **kwargs):
+        return -lagrangian(*args, **kwargs)
+
     cga_init, cga_update, cga_get_params = cga(
         step_size_f=lr_func,
         step_size_g=lr_func if lr_multipliers is None else lr_multipliers,
         f=lagrangian,
-        g=lambda x, y: -lagrangian(x, y),
+        g=neg_lagrangian,
         linear_op_solver=linear_op_solver or cg.fixed_point_solve,
     )
 
