@@ -21,5 +21,5 @@ def make_lagrangian(func, equality_constraints):
     return init_multipliers, lagrangian, get_params
 
 
-def get_langrange_multipliers(opt_state):
+def get_multipliers(opt_state):
     return opt_state[1]

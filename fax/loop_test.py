@@ -222,6 +222,8 @@ class LoopTest(jax.test_util.JaxTestCase):
 
         testing.assert_array_equal(unroll_sol, loop_sol)
 
+        jax.grad(lambda x: run_unrolled(x).value)(init_x)
+
     @parameterized.parameters(
         {"jit": False},
         {"jit": True},
