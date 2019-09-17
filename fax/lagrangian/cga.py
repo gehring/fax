@@ -147,8 +147,9 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         eta_g = step_size_g(i)
         eta_fg = eta_g * eta_f
 
-        jvp_xyf = make_mixed_jvp(f, x, y)
-        jvp_yxg = make_mixed_jvp(g, x, y, reversed=True)
+        jvp_xyf = make_mixed_jvp(partial(f, *args, **kwargs), x, y)
+        jvp_yxg = make_mixed_jvp(partial(f, *args, **kwargs), x, y,
+                                 reversed=True)
 
         def linear_op_x(x):
             return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
