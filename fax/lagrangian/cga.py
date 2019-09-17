@@ -311,7 +311,7 @@ def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
     def lagrange_init(lagrange_params):
         return cga_init(lagrange_params)
 
-    def lagrange_update(i, grads, opt_state):
+    def lagrange_update(i, grads, opt_state, *args, **kwargs):
         """Update the optimization state of the Lagrangian.
 
         Args:
@@ -328,7 +328,7 @@ def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
             Lagrange multipliers.
         """
         grads = (grads[0], tree_util.tree_map(lax.neg, grads[1]))
-        return cga_update(i, grads, opt_state)
+        return cga_update(i, grads, opt_state, *args, **kwargs)
 
     def get_params(opt_state):
         return cga_get_params(opt_state)
