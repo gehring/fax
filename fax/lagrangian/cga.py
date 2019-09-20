@@ -97,7 +97,7 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
 
 
 def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
-        default_max_iter=1000):
+        default_max_iter=1000, solve_order='both'):
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
@@ -151,32 +151,72 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         jvp_yxg = make_mixed_jvp(partial(g, *args, **kwargs), x, y,
                                  reversed=True)
 
-        def linear_op_x(x):
-            return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
+        def solve_delta_x(init_x):
+            def linear_op_x(x):
+                return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
 
-        def linear_op_y(y):
-            return tree_util.tree_map(lambda v: eta_fg * v, jvp_yxg(jvp_xyf(y)))
+            bx = tree_util.tree_multimap(
+                lambda grad_xf, z: grad_xf + eta_g * z,
+                grad_xf,
+                jvp_xyf(grad_yg),
+            )
 
-        bx = tree_util.tree_multimap(
-            lambda grad_xf, z: grad_xf + eta_g * z,
-            grad_xf,
-            jvp_xyf(grad_yg),
-        )
+            delta_x = linear_op_solver(
+                linear_op=linear_op_x,
+                bvec=bx,
+                init_x=init_x).value
 
-        delta_x = linear_op_solver(
-            linear_op=linear_op_x,
-            bvec=bx,
-            init_x=delta_x).value
+            return delta_x
 
-        by = tree_util.tree_multimap(
-            lambda z, grad_yg: grad_yg + eta_f * z,
-            jvp_yxg(grad_xf), grad_yg
-        )
+        def solve_delta_y(init_y):
+            def linear_op_y(y):
+                return tree_util.tree_map(lambda v: eta_fg * v, jvp_yxg(jvp_xyf(y)))
 
-        delta_y = linear_op_solver(
-            linear_op=linear_op_y,
-            bvec=by,
-            init_x=delta_y).value
+            by = tree_util.tree_multimap(
+                lambda z, grad_yg: grad_yg + eta_f * z,
+                jvp_yxg(grad_xf), grad_yg
+            )
+
+            delta_y = linear_op_solver(
+                linear_op=linear_op_y,
+                bvec=by,
+                init_x=init_y).value
+
+            return delta_y
+
+        def solve_x_update_y(deltas):
+            delta_x, _ = deltas
+            delta_x = solve_delta_x(delta_x)
+            dx = tree_util.tree_multimap(lambda v: eta_f*v, jvp_yxg(delta_x))
+            delta_y = tree_util.tree_multimap(
+                lambda grad_yg, dx: grad_yg + eta_f * dx,
+                grad_yg, dx)
+            return delta_x, delta_y
+
+        def solve_y_update_x(deltas):
+            _, delta_y = deltas
+            delta_y = solve_delta_y(delta_y)
+            dy = tree_util.tree_multimap(lambda v: eta_g*v, jvp_xyf(delta_y))
+            delta_x = tree_util.tree_multimap(
+                lambda grad_xf, dy: grad_xf + eta_g * dy,
+                grad_xf, dy)
+            return delta_x, delta_y
+
+        def solve_both(deltas):
+            delta_x, delta_y = deltas
+            delta_x = solve_delta_x(delta_x)
+            delta_y = solve_delta_y(delta_y)
+            return delta_x, delta_y
+
+        def solve_alternating(deltas):
+            return lax.cond(
+                np.mod(i, 2).astype(bool),
+                deltas, solve_x_update_y, deltas, solve_y_update_x)
+
+        solver = {'both': solve_both, 'alternate': solve_alternating,
+                  'xy': solve_x_update_y, 'yx': solve_y_update_x}
+
+        delta_x, delta_y = solver[solve_order]((delta_x, delta_y))
 
         x = tree_util.tree_multimap(lambda x, delta_x: x + eta_f * delta_x,
                                     x, delta_x)
@@ -192,7 +232,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
 def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
                   step_size_g=None, linear_op_solver=None, batched_iter_size=1,
-                  unroll=False, use_full_matrix=False):
+                  unroll=False, use_full_matrix=False, solve_order='both'):
     """Run competitive gradient ascent until convergence or some max iteration.
 
     Use this function to find a fixed point of the competitive gradient
@@ -245,6 +285,15 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             products. This is useful for debugging and might provide a small
             performance boost when the dimensions are small. If set to True,
             then, if provided, the `linear_op_solver` is ignored.
+        solve_order (str, optional): Specifies how the updates for each player are solved for.
+            Should be one of
+
+            - 'both' (default): Solves the linear system for each player (eq. 3 of Schaefer 2019)
+            - 'yx' : Solves for the player behind `y` then update `x`
+            - 'xy' : Solves for the player behind `x` then update `y`
+            - 'alternate': Solves for `x` update `y`, then solve for y and update `x`
+
+            Defaults to 'both'
 
     Returns:
         FixedPointSolution: A named tuple containing the results of the
@@ -271,6 +320,7 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             f=f,
             g=g,
             linear_op_solver=linear_op_solver,
+            solve_order=solve_order
         )
 
     grad_yg = jax.grad(g, 1)
