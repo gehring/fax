@@ -14,29 +14,29 @@ from fax.lagrangian import cg
 CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
 
 
-def make_mixed_jvp(f, x, y, reversed=False):
+def make_mixed_jvp(f, first_args, second_args, opposite=False):
     """Make a mixed jacobian-vector product function
     Args:
         f (callable): Binary callable with signature f(x,y)
-        x (numpy.ndarray): First argument to f
-        y (numpy.ndarray): Second argument to f
-        reversed (bool, optional): Take Dyx if False, Dxy if True. Defaults to
+        first_args (numpy.ndarray): First arguments to f
+        second_args (numpy.ndarray): Second arguments to f
+        opposite (bool, optional): Take Dyx if False, Dxy if True. Defaults to
             False.
     Returns:
         callable: Unary callable 'jvp(v)' taking a numpy.ndarray as input.
     """
-    if reversed is not True:
-        given = y
+    if opposite is not True:
+        given = second_args
         gradfun = jax.grad(f, 0)
 
         def frozen_grad(y):
-            return gradfun(x, y)
+            return gradfun(first_args, y)
     else:
-        given = x
+        given = first_args
         gradfun = jax.grad(f, 1)
 
         def frozen_grad(x):
-            return gradfun(x, y)
+            return gradfun(x, second_args)
 
     return jax.linearize(frozen_grad, given)[1]
 
@@ -149,7 +149,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
         jvp_xyf = make_mixed_jvp(partial(f, *args, **kwargs), x, y)
         jvp_yxg = make_mixed_jvp(partial(g, *args, **kwargs), x, y,
-                                 reversed=True)
+                                 opposite=True)
 
         def solve_delta_x(init_x):
             def linear_op_x(x):
@@ -187,19 +187,19 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         def solve_x_update_y(deltas):
             delta_x, _ = deltas
             delta_x = solve_delta_x(delta_x)
-            dx = tree_util.tree_multimap(lambda v: eta_f*v, jvp_yxg(delta_x))
+            z = tree_util.tree_multimap(lambda v: eta_f*v, jvp_yxg(delta_x))
             delta_y = tree_util.tree_multimap(
-                lambda grad_yg, dx: grad_yg + eta_f * dx,
-                grad_yg, dx)
+                lambda grad_yg, z: grad_yg + z,
+                grad_yg, z)
             return delta_x, delta_y
 
         def solve_y_update_x(deltas):
             _, delta_y = deltas
             delta_y = solve_delta_y(delta_y)
-            dy = tree_util.tree_multimap(lambda v: eta_g*v, jvp_xyf(delta_y))
+            z = tree_util.tree_multimap(lambda v: eta_g*v, jvp_xyf(delta_y))
             delta_x = tree_util.tree_multimap(
-                lambda grad_xf, dy: grad_xf + eta_g * dy,
-                grad_xf, dy)
+                lambda grad_xf, z: grad_xf + z,
+                grad_xf, z)
             return delta_x, delta_y
 
         def solve_both(deltas):
@@ -289,9 +289,9 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             Should be one of
 
             - 'both' (default): Solves the linear system for each player (eq. 3 of Schaefer 2019)
-            - 'yx' : Solves for the player behind `y` then update `x`
-            - 'xy' : Solves for the player behind `x` then update `y`
-            - 'alternate': Solves for `x` update `y`, then solve for y and update `x`
+            - 'yx' : Solves for the player behind `y` then updates `x`
+            - 'xy' : Solves for the player behind `x` then updates `y`
+            - 'alternate': Solves for `x` update `y`, next iteration solves for y and update `x`
 
             Defaults to 'both'
 
@@ -349,7 +349,7 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
 
 
 def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
-                     linear_op_solver=None):
+                     linear_op_solver=None, solve_order='both'):
 
     def neg_lagrangian(*args, **kwargs):
         return -lagrangian(*args, **kwargs)
@@ -360,6 +360,7 @@ def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
         f=lagrangian,
         g=neg_lagrangian,
         linear_op_solver=linear_op_solver or cg.fixed_point_solve,
+        solve_order=solve_order
     )
 
     def lagrange_init(lagrange_params):
