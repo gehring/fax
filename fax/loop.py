@@ -117,9 +117,8 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
                                        return_last_two=True)
         return i_new, x_new, x_old
 
-    init_vals = (batched_iter_size,
-                 unrolled(0, init_x, func, batched_iter_size)[1],
-                 init_x)
+    init_vals = unrolled(0, init_x, func, batched_iter_size,
+                         return_last_two=True)
 
     if unroll:
         if max_batched_iter is None:
@@ -129,11 +128,14 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
             del idx
             return body(args), None
 
-        (iterations, sol, prev_sol), _ = jax.lax.scan(
-            f=scan_step,
-            init=init_vals,
-            xs=np.arange(max_batched_iter - 1),
-        )
+        if max_batched_iter < 2:
+            iterations, sol, prev_sol = init_vals
+        else:
+            (iterations, sol, prev_sol), _ = jax.lax.scan(
+                f=scan_step,
+                init=init_vals,
+                xs=np.arange(max_batched_iter - 1),
+            )
         converged = convergence_test(sol, prev_sol)
 
     else:
