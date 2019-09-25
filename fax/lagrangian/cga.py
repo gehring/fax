@@ -97,7 +97,7 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
 
 
 def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
-        default_max_iter=1000, solve_order='both'):
+        default_max_iter=1000, solve_order='alternating'):
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
