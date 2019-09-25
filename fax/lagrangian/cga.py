@@ -101,7 +101,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
-            min_type = converge.tree_smallest_float(x_new)
+            min_type = converge.tree_smallest_float_dtype(x_new)
             rtol, atol = converge.adjust_tol_for_dtype(1e-10, 1e-10, min_type)
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
