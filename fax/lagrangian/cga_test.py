@@ -30,12 +30,12 @@ def _tree_concatentate(x):
 class CGATest(jax.test_util.JaxTestCase):
 
     @parameterized.parameters(
-        {"fullmatrix": False, "conj_grad": True, "order": "both"},
-        {"fullmatrix": False, "conj_grad": True, "order": "alternate"},
+        {"fullmatrix": False, "conj_grad": True, "order": "simultaneous"},
+        {"fullmatrix": False, "conj_grad": True, "order": "alternating"},
         {"fullmatrix": False, "conj_grad": True, "order": "xy"},
         {"fullmatrix": False, "conj_grad": True, "order": "yx"},
-        {"fullmatrix": False, "conj_grad": False, "order": "both"},
-        {"fullmatrix": False, "conj_grad": False, "order": "alternate"},
+        {"fullmatrix": False, "conj_grad": False, "order": "simultaneous"},
+        {"fullmatrix": False, "conj_grad": False, "order": "alternating"},
         {"fullmatrix": False, "conj_grad": False, "order": "xy"},
         {"fullmatrix": False, "conj_grad": False, "order": "yx"},
         {"fullmatrix": True, "conj_grad": False, "order": None},
@@ -104,13 +104,64 @@ class CGATest(jax.test_util.JaxTestCase):
         self.assertAllClose(jax.tree_map(np.zeros_like, final_values),
                             final_values, check_dtypes=True)
 
+    def testCGASolveOrder(self):
+        rng = random.PRNGKey(398513)
+
+        rng, amat_key = random.split(rng)
+        amat = random.uniform(amat_key, (2, 3))
+        amat = amat + np.eye(*amat.shape)
+
+        def f(x, y):
+            return x.T @ amat @ y + np.dot(y, y)
+
+        def g(x, y):
+            return -f(x, y)
+
+        linear_op_solver = cg.fixed_point_solve
+
+        eta_f = 0.1
+        eta_g = 0.5
+        rng_x, rng_y = random.split(rng)
+        init_vals = (random.uniform(rng_x, shape=(amat.shape[0],)),
+                     random.uniform(rng_y, shape=(amat.shape[1],)))
+
+        grad_yg = jax.grad(g, 1)
+        grad_xf = jax.grad(f, 0)
+
+        def two_steps(params, order):
+            cga_init, cga_update, get_params = cga.cga(
+                step_size_f=eta_f,
+                step_size_g=eta_g,
+                f=f,
+                g=g,
+                linear_op_solver=linear_op_solver,
+                solve_order=order,
+            )
+            opt_state = cga_init(params)
+
+            def step(i, opt_state):
+                x, y = get_params(opt_state)[:2]
+                grads = (grad_xf(x, y), grad_yg(x, y))
+                return cga_update(i, grads, opt_state)
+
+            return get_params(step(1, step(0, opt_state)))
+
+        orders = ["simultaneous", "alternating", "xy", "yx"]
+        results = {order: two_steps(init_vals, order) for order in orders}
+
+        for order, result in results.items():
+            if order != "simultaneous":
+                print("Comparing {} and {}".format("simultaneous", order))
+                for a, b in zip(results["simultaneous"], result):
+                    self.assertArraysAllClose(a, b, check_dtypes=True)
+
     @parameterized.parameters(
-        {"fullmatrix": False, "conj_grad": True, "order": "both"},
-        {"fullmatrix": False, "conj_grad": True, "order": "alternate"},
+        {"fullmatrix": False, "conj_grad": True, "order": "simultaneous"},
+        {"fullmatrix": False, "conj_grad": True, "order": "alternating"},
         {"fullmatrix": False, "conj_grad": True, "order": "xy"},
         {"fullmatrix": False, "conj_grad": True, "order": "yx"},
-        {"fullmatrix": False, "conj_grad": False, "order": "both"},
-        {"fullmatrix": False, "conj_grad": False, "order": "alternate"},
+        {"fullmatrix": False, "conj_grad": False, "order": "simultaneous"},
+        {"fullmatrix": False, "conj_grad": False, "order": "alternating"},
         {"fullmatrix": False, "conj_grad": False, "order": "xy"},
         {"fullmatrix": False, "conj_grad": False, "order": "yx"},
         {"fullmatrix": True, "conj_grad": False, "order": None}
@@ -154,12 +205,12 @@ class CGATest(jax.test_util.JaxTestCase):
                             solution.value, check_dtypes=True)
 
     @parameterized.parameters(
-        {"fullmatrix": False, "conj_grad": True, "order": "both"},
-        {"fullmatrix": False, "conj_grad": True, "order": "alternate"},
+        {"fullmatrix": False, "conj_grad": True, "order": "simultaneous"},
+        {"fullmatrix": False, "conj_grad": True, "order": "alternating"},
         {"fullmatrix": False, "conj_grad": True, "order": "xy"},
         {"fullmatrix": False, "conj_grad": True, "order": "yx"},
-        {"fullmatrix": False, "conj_grad": False, "order": "both"},
-        {"fullmatrix": False, "conj_grad": False, "order": "alternate"},
+        {"fullmatrix": False, "conj_grad": False, "order": "simultaneous"},
+        {"fullmatrix": False, "conj_grad": False, "order": "alternating"},
         {"fullmatrix": False, "conj_grad": False, "order": "xy"},
         {"fullmatrix": False, "conj_grad": False, "order": "yx"},
         {"fullmatrix": True, "conj_grad": False, "order": None}

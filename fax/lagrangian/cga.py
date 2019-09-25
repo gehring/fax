@@ -151,9 +151,13 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         jvp_yxg = make_mixed_jvp(partial(g, *args, **kwargs), x, y,
                                  opposite=True)
 
+        def linear_op_x(x):
+            return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
+
+        def linear_op_y(y):
+            return tree_util.tree_map(lambda v: eta_fg * v, jvp_yxg(jvp_xyf(y)))
+
         def solve_delta_x(init_x):
-            def linear_op_x(x):
-                return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
 
             bx = tree_util.tree_multimap(
                 lambda grad_xf, z: grad_xf + eta_g * z,
@@ -169,8 +173,6 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
             return delta_x
 
         def solve_delta_y(init_y):
-            def linear_op_y(y):
-                return tree_util.tree_map(lambda v: eta_fg * v, jvp_yxg(jvp_xyf(y)))
 
             by = tree_util.tree_multimap(
                 lambda z, grad_yg: grad_yg + eta_f * z,
@@ -187,19 +189,17 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         def solve_x_update_y(deltas):
             delta_x, _ = deltas
             delta_x = solve_delta_x(delta_x)
-            z = tree_util.tree_multimap(lambda v: eta_f*v, jvp_yxg(delta_x))
             delta_y = tree_util.tree_multimap(
-                lambda grad_yg, z: grad_yg + z,
-                grad_yg, z)
+                lambda g_y, v: (g_y + eta_f * v),
+                grad_yg, jvp_yxg(delta_x))
             return delta_x, delta_y
 
         def solve_y_update_x(deltas):
             _, delta_y = deltas
             delta_y = solve_delta_y(delta_y)
-            z = tree_util.tree_multimap(lambda v: eta_g*v, jvp_xyf(delta_y))
             delta_x = tree_util.tree_multimap(
-                lambda grad_xf, z: grad_xf + z,
-                grad_xf, z)
+                lambda g_x, v: (g_x + eta_g * v),
+                grad_xf, jvp_xyf(delta_y))
             return delta_x, delta_y
 
         def solve_both(deltas):
@@ -213,7 +213,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
                 np.mod(i, 2).astype(bool),
                 deltas, solve_x_update_y, deltas, solve_y_update_x)
 
-        solver = {'both': solve_both, 'alternate': solve_alternating,
+        solver = {'simultaneous': solve_both, 'alternating': solve_alternating,
                   'xy': solve_x_update_y, 'yx': solve_y_update_x}
 
         delta_x, delta_y = solver[solve_order]((delta_x, delta_y))
