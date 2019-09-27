@@ -41,15 +41,15 @@ def is_tolerance_achievable(rtol, atol, dtype):
     return adj_rtol == rtol and adj_atol == atol
 
 
-def _min_float_type(r_type, l_type):
+def _min_float_dtype(r_type, l_type):
     min_type = r_type
     if onp.finfo(r_type).eps > onp.finfo(l_type).eps:
         min_type = l_type
     return min_type
 
 
-def tree_smallest_float(x):
-    return tree_util.tree_reduce(_min_float_type,
+def tree_smallest_float_dtype(x):
+    return tree_util.tree_reduce(_min_float_dtype,
                                  tree_util.tree_map(lambda x: x.dtype, x))
 
 

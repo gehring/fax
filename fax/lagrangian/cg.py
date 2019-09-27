@@ -3,6 +3,7 @@ from functools import partial
 from jax import lax
 from jax import tree_util
 
+from fax import converge
 from fax import loop
 from fax import math
 
@@ -25,6 +26,8 @@ def cg_step(a_lin_op, i, current_state):
 
 def conjugate_gradient_solve(linear_op, bvec, init_x, max_iter=1000,
                              atol=1e-10):
+    dtype = converge.tree_smallest_float_dtype(bvec)
+    _, atol = converge.adjust_tol_for_dtype(0., atol=atol, dtype=dtype)
     init_r = tree_util.tree_multimap(lax.sub, bvec, linear_op(init_x))
     init_p = init_r
     init_r_sqr = math.pytree_dot(init_r, init_r)

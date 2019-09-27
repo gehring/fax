@@ -14,29 +14,29 @@ from fax.lagrangian import cg
 CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
 
 
-def make_mixed_jvp(f, x, y, reversed=False):
+def make_mixed_jvp(f, first_args, second_args, opposite=False):
     """Make a mixed jacobian-vector product function
     Args:
         f (callable): Binary callable with signature f(x,y)
-        x (numpy.ndarray): First argument to f
-        y (numpy.ndarray): Second argument to f
-        reversed (bool, optional): Take Dyx if False, Dxy if True. Defaults to
+        first_args (numpy.ndarray): First arguments to f
+        second_args (numpy.ndarray): Second arguments to f
+        opposite (bool, optional): Take Dyx if False, Dxy if True. Defaults to
             False.
     Returns:
         callable: Unary callable 'jvp(v)' taking a numpy.ndarray as input.
     """
-    if reversed is not True:
-        given = y
+    if opposite is not True:
+        given = second_args
         gradfun = jax.grad(f, 0)
 
         def frozen_grad(y):
-            return gradfun(x, y)
+            return gradfun(first_args, y)
     else:
-        given = x
+        given = first_args
         gradfun = jax.grad(f, 1)
 
         def frozen_grad(x):
-            return gradfun(x, y)
+            return gradfun(x, second_args)
 
     return jax.linearize(frozen_grad, given)[1]
 
@@ -97,11 +97,11 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
 
 
 def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
-        default_max_iter=1000):
+        default_max_iter=1000, solve_order='alternating'):
 
     if linear_op_solver is None:
         def default_convergence_test(x_new, x_old):
-            min_type = converge.tree_smallest_float(x_new)
+            min_type = converge.tree_smallest_float_dtype(x_new)
             rtol, atol = converge.adjust_tol_for_dtype(1e-10, 1e-10, min_type)
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
@@ -149,7 +149,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
         jvp_xyf = make_mixed_jvp(partial(f, *args, **kwargs), x, y)
         jvp_yxg = make_mixed_jvp(partial(g, *args, **kwargs), x, y,
-                                 reversed=True)
+                                 opposite=True)
 
         def linear_op_x(x):
             return tree_util.tree_map(lambda v: eta_fg * v, jvp_xyf(jvp_yxg(x)))
@@ -157,26 +157,66 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
         def linear_op_y(y):
             return tree_util.tree_map(lambda v: eta_fg * v, jvp_yxg(jvp_xyf(y)))
 
-        bx = tree_util.tree_multimap(
-            lambda grad_xf, z: grad_xf + eta_g * z,
-            grad_xf,
-            jvp_xyf(grad_yg),
-        )
+        def solve_delta_x(init_x):
 
-        delta_x = linear_op_solver(
-            linear_op=linear_op_x,
-            bvec=bx,
-            init_x=delta_x).value
+            bx = tree_util.tree_multimap(
+                lambda grad_xf, z: grad_xf + eta_g * z,
+                grad_xf,
+                jvp_xyf(grad_yg),
+            )
 
-        by = tree_util.tree_multimap(
-            lambda z, grad_yg: grad_yg + eta_f * z,
-            jvp_yxg(grad_xf), grad_yg
-        )
+            delta_x = linear_op_solver(
+                linear_op=linear_op_x,
+                bvec=bx,
+                init_x=init_x).value
 
-        delta_y = linear_op_solver(
-            linear_op=linear_op_y,
-            bvec=by,
-            init_x=delta_y).value
+            return delta_x
+
+        def solve_delta_y(init_y):
+
+            by = tree_util.tree_multimap(
+                lambda z, grad_yg: grad_yg + eta_f * z,
+                jvp_yxg(grad_xf), grad_yg
+            )
+
+            delta_y = linear_op_solver(
+                linear_op=linear_op_y,
+                bvec=by,
+                init_x=init_y).value
+
+            return delta_y
+
+        def solve_x_update_y(deltas):
+            delta_x, _ = deltas
+            delta_x = solve_delta_x(delta_x)
+            delta_y = tree_util.tree_multimap(
+                lambda g_y, v: (g_y + eta_f * v),
+                grad_yg, jvp_yxg(delta_x))
+            return delta_x, delta_y
+
+        def solve_y_update_x(deltas):
+            _, delta_y = deltas
+            delta_y = solve_delta_y(delta_y)
+            delta_x = tree_util.tree_multimap(
+                lambda g_x, v: (g_x + eta_g * v),
+                grad_xf, jvp_xyf(delta_y))
+            return delta_x, delta_y
+
+        def solve_both(deltas):
+            delta_x, delta_y = deltas
+            delta_x = solve_delta_x(delta_x)
+            delta_y = solve_delta_y(delta_y)
+            return delta_x, delta_y
+
+        def solve_alternating(deltas):
+            return lax.cond(
+                np.mod(i, 2).astype(bool),
+                deltas, solve_x_update_y, deltas, solve_y_update_x)
+
+        solver = {'simultaneous': solve_both, 'alternating': solve_alternating,
+                  'xy': solve_x_update_y, 'yx': solve_y_update_x}
+
+        delta_x, delta_y = solver[solve_order]((delta_x, delta_y))
 
         x = tree_util.tree_multimap(lambda x, delta_x: x + eta_f * delta_x,
                                     x, delta_x)
@@ -192,7 +232,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
 
 def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
                   step_size_g=None, linear_op_solver=None, batched_iter_size=1,
-                  unroll=False, use_full_matrix=False):
+                  unroll=False, use_full_matrix=False, solve_order='both'):
     """Run competitive gradient ascent until convergence or some max iteration.
 
     Use this function to find a fixed point of the competitive gradient
@@ -245,6 +285,15 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             products. This is useful for debugging and might provide a small
             performance boost when the dimensions are small. If set to True,
             then, if provided, the `linear_op_solver` is ignored.
+        solve_order (str, optional): Specifies how the updates for each player are solved for.
+            Should be one of
+
+            - 'both' (default): Solves the linear system for each player (eq. 3 of Schaefer 2019)
+            - 'yx' : Solves for the player behind `y` then updates `x`
+            - 'xy' : Solves for the player behind `x` then updates `y`
+            - 'alternate': Solves for `x` update `y`, next iteration solves for y and update `x`
+
+            Defaults to 'both'
 
     Returns:
         FixedPointSolution: A named tuple containing the results of the
@@ -271,6 +320,7 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             f=f,
             g=g,
             linear_op_solver=linear_op_solver,
+            solve_order=solve_order
         )
 
     grad_yg = jax.grad(g, 1)
@@ -299,7 +349,7 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
 
 
 def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
-                     linear_op_solver=None):
+                     linear_op_solver=None, solve_order='alternating'):
 
     def neg_lagrangian(*args, **kwargs):
         return -lagrangian(*args, **kwargs)
@@ -310,6 +360,7 @@ def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
         f=lagrangian,
         g=neg_lagrangian,
         linear_op_solver=linear_op_solver or cg.fixed_point_solve,
+        solve_order=solve_order
     )
 
     def lagrange_init(lagrange_params):
