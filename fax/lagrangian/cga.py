@@ -348,7 +348,7 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
     )
 
 
-def cga_lagrange_min(lr_func, lagrangian, lr_multipliers=None,
+def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
                      linear_op_solver=None, solve_order='alternating'):
 
     def neg_lagrangian(*args, **kwargs):

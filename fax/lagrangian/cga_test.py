@@ -314,7 +314,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         lr = 0.5
         rtol = atol = 1e-6
-        opt_init, opt_update, get_params = cga.cga_lagrange_min(lr, lagrangian)
+        opt_init, opt_update, get_params = cga.cga_lagrange_min(lagrangian, lr)
 
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
