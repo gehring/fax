@@ -9,7 +9,7 @@ from jax.experimental import optimizers
 
 from fax import converge
 from fax import loop
-from fax.lagrangian import cg
+from fax.competitive import cg
 
 CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
 
@@ -346,46 +346,3 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
         value=get_params(solution.value),
         previous_value=get_params(solution.previous_value),
     )
-
-
-def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
-                     linear_op_solver=None, solve_order='alternating'):
-
-    def neg_lagrangian(*args, **kwargs):
-        return -lagrangian(*args, **kwargs)
-
-    cga_init, cga_update, cga_get_params = cga(
-        step_size_f=lr_func,
-        step_size_g=lr_func if lr_multipliers is None else lr_multipliers,
-        f=lagrangian,
-        g=neg_lagrangian,
-        linear_op_solver=linear_op_solver or cg.fixed_point_solve,
-        solve_order=solve_order
-    )
-
-    def lagrange_init(lagrange_params):
-        return cga_init(lagrange_params)
-
-    def lagrange_update(i, grads, opt_state, *args, **kwargs):
-        """Update the optimization state of the Lagrangian.
-
-        Args:
-            i: iteration step
-            grads: tuple of pytrees where the first element is a pytree of the
-                gradients of the Lagrangian with respect to the parameters and
-                the seconds is a pytree of the gradients with respect to the
-                Lagrangian multipliers.
-            opt_state: the packed optimization state returned by the previous
-                call to this method or from the first call to `lagrange_init`.
-
-        Returns:
-            An new packed optimization state with the updated parameters and
-            Lagrange multipliers.
-        """
-        grads = (grads[0], tree_util.tree_map(lax.neg, grads[1]))
-        return cga_update(i, grads, opt_state, *args, **kwargs)
-
-    def get_params(opt_state):
-        return cga_get_params(opt_state)
-
-    return lagrange_init, lagrange_update, get_params

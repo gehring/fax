@@ -138,7 +138,8 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         x0 = np.zeros_like(offset)
 
         solver = self.make_solver(param_ax_plus_b)
-        loss = lambda x, params: np.sum(solver(x, params).value)
+
+        def loss(x, params): return np.sum(solver(x, params).value)
         jax.test_util.check_grads(
             loss,
             (x0, (matrix, offset),),
@@ -171,4 +172,23 @@ def constrained_opt_problem(n):
     optimal_solution = np.array([1.] + [0.]*(n-1))
 
     optimal_value = -1.
+    return func, equality_constraints, optimal_solution, optimal_value
+
+
+def dot_product_minimization(v):
+    """Problem: find a u such that np.dot(u, v) is maximum, subject to np.linalg.norm(u) = 1.
+
+    Args:
+        n (integer): Number of components for the fixed vector `v`
+    """
+
+    def func(u):
+        return np.dot(u, v)
+
+    def equality_constraints(u):
+        return np.linalg.norm(u) - 1
+
+    optimal_solution = -(1./np.linalg.norm(v))*v
+    optimal_value = np.dot(optimal_solution, v)
+
     return func, equality_constraints, optimal_solution, optimal_value

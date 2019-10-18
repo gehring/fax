@@ -76,19 +76,25 @@ def make_adjoint_fixed_point_iteration(
 def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
                      default_atol=1e-4, default_max_iter=5000,
                      default_batched_iter_size=1):
-    """
+    """ Create a 
 
     Args:
         param_func: A "parametric" operator (i.e., callable) taking in some
             parameters and returning a function for which we seek a fixed point.
         forward_solver:
-        default_rtol:
-        default_atol:
-        default_max_iter:
-        default_batched_iter_size:
+        default_rtol (float, optional): The relative tolerance (as used by `np.isclose`).
+            Defaults to 1e-4.
+        default_atol (float, optional): The absolute tolerance (as used by `np.isclose`).
+            Defaults to 1e-4.
+        default_max_iter (int, optional): The maximum number of iterations. Defaults to 5000.
+        default_batched_iter_size (int, optional):  The number of iterations to be
+            unrolled and executed per iterations of `while_loop` op. Defaults to 1.
 
     Returns:
-
+        callable: Binary callable with signature ``f(x_0, params)`` returning a solution ``x``
+            such that ``param_func(params)(x) = x``. The returned callabled is registered as a
+            ``jax.custom_transform`` with its associated VJP rule so that it can be composed with
+            other functions in and end-to-end fashion.
     """
     # if no solver is specified, create a default solver
     if forward_solver is None:
