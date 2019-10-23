@@ -16,6 +16,7 @@ from fax import test_util
 from fax.constrained import make_lagrangian
 from fax.constrained import cga_lagrange_min
 from fax.constrained import cga_ecp
+from fax.constrained import slsqp_ecp
 from fax.constrained import implicit_ecp
 
 
@@ -65,8 +66,10 @@ class CGATest(jax.test_util.JaxTestCase):
     @parameterized.parameters(
         {'method': implicit_ecp,
          'kwargs': {'max_iter': 1000, 'lr_func': 0.01, 'optimizer': optimizers.adam}},
-        {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}})
-    @hypothesis.settings(max_examples=10, deadline=5000.)
+        {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}},
+        {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}},
+    )
+    @hypothesis.settings(max_examples=1, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
             onp.float, (2,),
@@ -75,11 +78,9 @@ class CGATest(jax.test_util.JaxTestCase):
     def test_ecp(self, method, kwargs, v):
         opt_solution = (1./np.linalg.norm(v))*v
 
-        @jax.jit
         def objective(x, y):
             return np.dot(np.asarray([x, y]), v)
 
-        @jax.jit
         def constraints(x, y):
             return np.linalg.norm(np.asarray([x, y])) - 1
 

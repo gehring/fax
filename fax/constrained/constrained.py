@@ -1,7 +1,13 @@
 """ Optimization methods for parametric nonlinear equality constrained problems.
 """
+import collections
+
+from scipy.optimize import minimize
+
 import jax
 from jax import lax
+from jax import jit
+from jax import grad
 import jax.numpy as np
 from jax import tree_util
 from jax.experimental import optimizers
@@ -13,6 +19,12 @@ from fax.competitive import cga
 from fax.loop import fixed_point_iteration
 from fax.implicit.twophase import make_adjoint_fixed_point_iteration
 from fax.implicit.twophase import make_forward_fixed_point_iteration
+
+
+ConstrainedSolution = collections.namedtuple(
+    "ConstrainedSolution",
+    "value converged iterations"
+)
 
 
 def default_convergence_test(x_new, x_old):
@@ -80,9 +92,9 @@ def implicit_ecp(
 
     opt_init, opt_update, get_params = optimizer(step_size=lr_func)
 
-    grad_objective = jax.grad(_objective, (0, 1))
+    grad_objective = grad(_objective, (0, 1))
 
-    @jax.jit
+    @jit
     def update(i, values):
         old_xstar, opt_state = values
         old_params = get_params(opt_state)
@@ -101,7 +113,7 @@ def implicit_ecp(
 
         return forward_solution.value, opt_state
 
-    @jax.jit
+    @jit
     def _convergence_test(new_state, old_state):
         x_new, params_new = new_state[0], get_params(new_state[1])
         x_old, params_old = old_state[0], get_params(old_state[1])
@@ -112,7 +124,7 @@ def implicit_ecp(
 
     solution = fixed_point_iteration(init_x=(x0, opt_state),
                                      func=update,
-                                     convergence_test=jax.jit(_convergence_test),
+                                     convergence_test=jit(_convergence_test),
                                      max_iter=max_iter,
                                      batched_iter_size=batched_iter_size,
                                      unroll=False)
@@ -274,7 +286,6 @@ def cga_ecp(
             `sol.value=func(sol.previous_value)` and allows us to log the size
             of the last step if desired.
     """
-
     def _objective(variables):
         return -objective(*variables)
 
@@ -290,14 +301,14 @@ def cga_ecp(
     opt_init, opt_update, get_params = cga_lagrange_min(
         lagrangian, lr_func, lr_multipliers, linear_op_solver, solve_order)
 
-    @jax.jit
+    @jit
     def update(i, opt_state):
-        grads = jax.grad(lagrangian, (0, 1))(*get_params(opt_state))
+        grads = grad(lagrangian, (0, 1))(*get_params(opt_state))
         return opt_update(i, grads, opt_state)
 
     solution = fixed_point_iteration(init_x=opt_init(lagrangian_variables),
                                      func=update,
-                                     convergence_test=jax.jit(convergence_test),
+                                     convergence_test=jit(convergence_test),
                                      max_iter=max_iter,
                                      batched_iter_size=batched_iter_size,
                                      unroll=False)
@@ -305,3 +316,39 @@ def cga_ecp(
         value=get_params(solution.value)[0],
         previous_value=get_params(solution.previous_value)[0],
     )
+
+
+def slsqp_ecp(objective, equality_constraints, initial_values, max_iter=500, ftol=1e-6):
+    """Interface to the Sequential Least Squares Programming in scipy.optimize.minimize
+
+    The SLSQP approach is described in:
+
+    Kraft, D. A software package for sequential quadratic programming. 1988.
+    DFVLR-FB 88-28, DLR German Aerospace Center  Institute for Flight Mechanics, Koln, Germany.
+
+    Args:
+        objective (callable): Binary callable with signature `f(x, θ)`
+        equality_constraints (callble): Binary callable with signature `h(x, θ)`
+        initial_values (tuple): Tuple of initial values `(x_0, θ_0)`
+        max_iter (int): Maximum number of outer iterations. Defaults to 500.
+        ftol (float, optional): Tolerance in the value of the objective for the stopping criterion.
+            Defaults to 1e-6.
+
+    Returns:
+        ConstrainedSolution: A namedtuple with fields 'value', 'iterations' and 'converged'
+    """
+    def _objective(variables):
+        return -objective(*variables)
+
+    def _equality_constraints(variables):
+        return -equality_constraints(*variables)
+
+    options = {'maxiter': max_iter, 'ftol': ftol}
+    constraints = ({'type': 'eq', 'fun': _equality_constraints,
+                    'jac': jit(grad(_equality_constraints))})
+
+    solution = minimize(_objective, initial_values, method='SLSQP',
+                        constraints=constraints, options=options, jac=jit(grad(_objective)))
+
+    return ConstrainedSolution(
+        value=solution.x, iterations=solution.nit, converged=solution.success)
