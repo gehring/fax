@@ -8,9 +8,11 @@ import jax
 from jax import lax
 from jax import jit
 from jax import grad
+from jax import jacrev
 import jax.numpy as np
 from jax import tree_util
 from jax.experimental import optimizers
+from jax.flatten_util import ravel_pytree
 
 from fax import math
 from fax import converge
@@ -35,7 +37,8 @@ def default_convergence_test(x_new, x_old):
 
 def implicit_ecp(
         objective, equality_constraints, initial_values, lr_func, max_iter=500,
-        convergence_test=default_convergence_test, batched_iter_size=1, optimizer=optimizers.sgd):
+        convergence_test=default_convergence_test, batched_iter_size=1, optimizer=optimizers.sgd,
+        tol=1e-6):
     """Use implicit differentiation to solve a nonlinear equality-constrained program of the form:
 
     max f(x, θ) subject to h(x, θ) = 0 .
@@ -53,7 +56,7 @@ def implicit_ecp(
         initial_values (tuple): Tuple of initial values `(x_0, θ_0)`
         lr_func (scalar or callable): The step size used by the unconstrained optimizer. This can
             be a scalar ora callable taking in the current iteration and returning a scalar.
-        max_iter (int): Maximum number of outer iterations. Defaults to 500.
+        max_iter (int, optional): Maximum number of outer iterations. Defaults to 500.
         convergence_test (callable): Binary callable with signature `callback(new_state, old_state)`
             where `new_state` and `old_state` are tuples of the form `(x_k^*, θ_k)` such that
             `h(x_k^*, θ_k) = 0` (and with `k-1` for `old_state`). The default convergence test
@@ -61,8 +64,9 @@ def implicit_ecp(
         batched_iter_size (int, optional):  The number of iterations to be
             unrolled and executed per iterations of the `while_loop` op for the forward iteration
             and the fixed-point adjoint iteration. Defaults to 1.
-        optimizer (callable): Unary callable waking a `lr_func` as a argument and returning an
-            unconstrained optimizer. Defaults to `jax.experimental.optimizers.sgd`.
+        optimizer (callable, optional): Unary callable waking a `lr_func` as a argument and
+            returning an unconstrained optimizer. Defaults to `jax.experimental.optimizers.sgd`.
+        tol (float, optional): Tolerance for the forward and backward iterations. Defaults to 1e-6.
 
     Returns:
         fax.loop.FixedPointSolution: A named tuple containing the solution `(x, θ)` as as the
@@ -75,20 +79,19 @@ def implicit_ecp(
     def _objective(*args):
         return -objective(*args)
 
-    def _equality_constraints(*args):
-        return -equality_constraints(*args)
-
     def make_fp_operator(params):
         def _fp_operator(i, x):
             del i
-            return x + _equality_constraints(x, params)
+            return x + equality_constraints(x, params)
         return _fp_operator
 
     constraints_solver = make_forward_fixed_point_iteration(
-        make_fp_operator, default_max_iter=max_iter, default_batched_iter_size=batched_iter_size)
+        make_fp_operator, default_max_iter=max_iter, default_batched_iter_size=batched_iter_size,
+        default_atol=tol, default_rtol=tol)
 
     adjoint_iteration_vjp = make_adjoint_fixed_point_iteration(
-        make_fp_operator, default_max_iter=max_iter, default_batched_iter_size=batched_iter_size)
+        make_fp_operator, default_max_iter=max_iter, default_batched_iter_size=batched_iter_size,
+        default_atol=tol, default_rtol=tol)
 
     opt_init, opt_update, get_params = optimizer(step_size=lr_func)
 
@@ -337,18 +340,29 @@ def slsqp_ecp(objective, equality_constraints, initial_values, max_iter=500, fto
     Returns:
         ConstrainedSolution: A namedtuple with fields 'value', 'iterations' and 'converged'
     """
-    def _objective(variables):
-        return -objective(*variables)
+    flat_initial_values, unravel = ravel_pytree(initial_values)
 
+    @jit
+    def _objective(variables):
+        unraveled = unravel(variables)
+        return -objective(*unraveled)
+
+    @jit
     def _equality_constraints(variables):
-        return -equality_constraints(*variables)
+        return np.ravel(equality_constraints(*unravel(variables)))
+
+    @jit
+    def gradfun_objective(variables):
+        return grad(_objective)(variables)
+
+    @jit
+    def jacobian_constraints(variables):
+        return jacrev(_equality_constraints)(variables)
 
     options = {'maxiter': max_iter, 'ftol': ftol}
-    constraints = ({'type': 'eq', 'fun': _equality_constraints,
-                    'jac': jit(grad(_equality_constraints))})
-
-    solution = minimize(_objective, initial_values, method='SLSQP',
-                        constraints=constraints, options=options, jac=jit(grad(_objective)))
+    constraints = ({'type': 'eq', 'fun': _equality_constraints, 'jac': jacobian_constraints})
+    solution = minimize(_objective, flat_initial_values, method='SLSQP',
+                        constraints=constraints, options=options, jac=gradfun_objective)
 
     return ConstrainedSolution(
-        value=solution.x, iterations=solution.nit, converged=solution.success)
+        value=unravel(solution.x), iterations=solution.nit, converged=solution.success)

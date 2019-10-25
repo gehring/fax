@@ -10,6 +10,9 @@ import jax.numpy as np
 from jax import random
 from jax import tree_util
 from jax.experimental import optimizers
+from jax.scipy.special import logsumexp
+from jax.experimental.stax import softmax
+from jax.config import config
 
 from fax import converge
 from fax import test_util
@@ -18,6 +21,7 @@ from fax.constrained import cga_lagrange_min
 from fax.constrained import cga_ecp
 from fax.constrained import slsqp_ecp
 from fax.constrained import implicit_ecp
+config.update("jax_enable_x64", True)
 
 
 class CGATest(jax.test_util.JaxTestCase):
@@ -65,10 +69,9 @@ class CGATest(jax.test_util.JaxTestCase):
 
     @parameterized.parameters(
         {'method': implicit_ecp,
-         'kwargs': {'max_iter': 1000, 'lr_func': 0.01, 'optimizer': optimizers.adam}},
+         'kwargs': {'max_iter': 1000, 'lr_func': 0.5, 'optimizer': optimizers.adam}},
         {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}},
-        {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}},
-    )
+        {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}},)
     @hypothesis.settings(max_examples=1, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
@@ -82,7 +85,7 @@ class CGATest(jax.test_util.JaxTestCase):
             return np.dot(np.asarray([x, y]), v)
 
         def constraints(x, y):
-            return np.linalg.norm(np.asarray([x, y])) - 1
+            return 1 - np.linalg.norm(np.asarray([x, y]))
 
         rng = random.PRNGKey(8413)
         initial_values = random.uniform(rng, (onp.alen(v),))
@@ -95,6 +98,52 @@ class CGATest(jax.test_util.JaxTestCase):
             check_dtypes=False)
 
         self.assertAllClose(opt_solution, np.asarray(solution.value), check_dtypes=False)
+
+    @parameterized.parameters(
+        {'method': implicit_ecp,
+         'kwargs': {'max_iter': 1000, 'lr_func': 0.01, 'optimizer': optimizers.adam}},
+        {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.15, 'lr_multipliers': 0.925}},
+        {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}},
+    )
+    def test_omd(self, method, kwargs):
+        true_transition = np.array([[[0.7, 0.3], [0.2, 0.8]],
+                                    [[0.99, 0.01], [0.99, 0.01]]])
+        true_reward = np.array(([[-0.45, -0.1],
+                                 [0.5,  0.5]]))
+        temperature = 1e-2
+        true_discount = 0.9
+        initial_distribution = np.ones(2)/2
+
+        optimal_value = 1.0272727  # pre-computed in other experiments, outside this code
+
+        def smooth_bellman_optimality_operator(x, params):
+            transition, reward, discount, temperature = params
+            return reward + discount * np.einsum('ast,t->sa', transition, temperature *
+                                                 logsumexp((1. / temperature) * x, axis=1))
+
+        @jax.jit
+        def objective(x, params):
+            del params
+            policy = softmax((1. / temperature) * x)
+            ppi = np.einsum('ast,sa->st', true_transition, policy)
+            rpi = np.einsum('sa,sa->s', true_reward, policy)
+            vf = np.linalg.solve(np.eye(true_transition.shape[-1]) - true_discount*ppi, rpi)
+            return initial_distribution @ vf
+
+        @jax.jit
+        def equality_constraints(x, params):
+            transition_logits, reward_hat = params
+            transition_hat = softmax((1./temperature)*transition_logits)
+            params = (transition_hat, reward_hat, true_discount, temperature)
+            return smooth_bellman_optimality_operator(x, params) - x
+
+        initial_values = (
+            np.zeros_like(true_reward),
+            (np.zeros_like(true_transition), np.zeros_like(true_reward))
+        )
+        solution = method(objective, equality_constraints, initial_values, **kwargs)
+
+        self.assertAllClose(objective(*solution.value), optimal_value, check_dtypes=False)
 
 
 if __name__ == "__main__":
