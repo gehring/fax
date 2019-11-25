@@ -7,19 +7,17 @@ import hypothesis.extra.numpy
 
 import numpy as onp
 
-from fax import converge
-from fax import test_util
-from fax.lagrangian import cg
-from fax.lagrangian import cga
-from fax.lagrangian import util as lagr_util
-
 import jax
 from jax import random
 from jax import tree_util
 import jax.numpy as np
 import jax.test_util
-
 from jax.config import config
+
+from fax import converge
+from fax.competitive import cg
+from fax.competitive import cga
+
 config.update("jax_enable_x64", True)
 
 
@@ -300,47 +298,6 @@ class CGATest(jax.test_util.JaxTestCase):
 
         # the number of iterations done should be the same
         self.assertEqual(tuple_sol.iterations, solution.iterations)
-
-    def testLagrangian(self):
-        n = 5
-        opt_prob = test_util.constrained_opt_problem(n)
-        func, eq_constraints, opt_sol, opt_val = opt_prob
-
-        init_mult, lagrangian, get_x = lagr_util.make_lagrangian(func,
-                                                                 eq_constraints)
-        rng = random.PRNGKey(8413)
-        init_params = random.uniform(rng, (n,))
-        lagr_params = init_mult(init_params)
-
-        lr = 0.5
-        rtol = atol = 1e-6
-        opt_init, opt_update, get_params = cga.cga_lagrange_min(lagrangian, lr)
-
-        def convergence_test(x_new, x_old):
-            return converge.max_diff_test(x_new, x_old, rtol, atol)
-
-        @jax.jit
-        def step(i, opt_state):
-            params = get_params(opt_state)
-            grads = jax.grad(lagrangian, (0, 1))(*params)
-            return opt_update(i, grads, opt_state)
-
-        opt_state = opt_init(lagr_params)
-
-        for i in range(500):
-            old_params = get_params(opt_state)
-            opt_state = step(i, opt_state)
-
-            if convergence_test(get_params(opt_state), old_params):
-                break
-
-        final_params = get_params(opt_state)
-        self.assertAllClose(opt_val, func(get_x(final_params)),
-                            check_dtypes=False)
-
-        h = eq_constraints(get_x(final_params))
-        self.assertAllClose(h, tree_util.tree_map(np.zeros_like, h),
-                            check_dtypes=False)
 
 
 if __name__ == "__main__":
