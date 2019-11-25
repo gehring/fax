@@ -76,7 +76,7 @@ def make_adjoint_fixed_point_iteration(
 def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
                      default_atol=1e-4, default_max_iter=5000,
                      default_batched_iter_size=1):
-    """ Create a 
+    """ Create an implicit function of the parameters and define its VJP rule.
 
     Args:
         param_func: A "parametric" operator (i.e., callable) taking in some

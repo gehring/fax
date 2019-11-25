@@ -68,11 +68,9 @@ class CGATest(jax.test_util.JaxTestCase):
                             check_dtypes=False)
 
     @parameterized.parameters(
-        {'method': implicit_ecp,
-         'kwargs': {'max_iter': 1000, 'lr_func': 0.5, 'optimizer': optimizers.adam}},
         {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}},
         {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}},)
-    @hypothesis.settings(max_examples=1, deadline=5000.)
+    @hypothesis.settings(max_examples=10, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
             onp.float, (2,),
@@ -96,8 +94,6 @@ class CGATest(jax.test_util.JaxTestCase):
             objective(*opt_solution),
             objective(*solution.value),
             check_dtypes=False)
-
-        self.assertAllClose(opt_solution, np.asarray(solution.value), check_dtypes=False)
 
     @parameterized.parameters(
         {'method': implicit_ecp,

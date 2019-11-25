@@ -97,7 +97,6 @@ def implicit_ecp(
 
     grad_objective = grad(_objective, (0, 1))
 
-    @jit
     def update(i, values):
         old_xstar, opt_state = values
         old_params = get_params(opt_state)
@@ -116,7 +115,6 @@ def implicit_ecp(
 
         return forward_solution.value, opt_state
 
-    @jit
     def _convergence_test(new_state, old_state):
         x_new, params_new = new_state[0], get_params(new_state[1])
         x_old, params_old = old_state[0], get_params(old_state[1])
