@@ -273,13 +273,12 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
             larger than 1 to reduce the number of times convergence is checked
             and to potentially allow for the graph of the unrolled batch to be
             more aggressively optimized.
-        unroll (bool, optional): If True, use a normal python while loop, i.e.,
-            unrolled ops. This enables back-propagating through the iterations.
+        unroll (bool, optional): If True, use `jax.lax.scan` instead of 
+            `jax.lax.while`. This enables back-propagating through the iterations.
 
             NOTE: due to current limitations in `JAX`, when `unroll` is `True`,
             convergence is ignored and the loop always runs for the maximum
-            number of iterations. Additionally, compilation times can be long
-            when running for a large number of iterations as a result.
+            number of iterations.
         use_full_matrix (bool, optional): Use a CGA implementation which uses
             full hessians instead of potentially more efficient jacobian-vector
             products. This is useful for debugging and might provide a small
