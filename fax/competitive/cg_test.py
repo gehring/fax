@@ -4,7 +4,7 @@ import hypothesis.extra.numpy
 
 import numpy as onp
 
-from fax.lagrangian import cg
+from fax.competitive import cg
 
 import jax.numpy as np
 import jax.test_util
