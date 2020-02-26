@@ -4,7 +4,7 @@ import hypothesis.extra.numpy
 
 import numpy as onp
 
-from fax.lagrangian import cg
+from fax.competitive import cg
 
 import jax.numpy as np
 import jax.test_util
@@ -31,7 +31,9 @@ class CGTest(jax.test_util.JaxTestCase):
 
         self.assertTrue(solution.converged)
         self.assertAllClose(np.linalg.solve(amat, bvec), solution.value,
-                            check_dtypes=True)
+                            check_dtypes=True,
+                            atol=1e-10,
+                            rtol=1e-5)
 
     @hypothesis.settings(max_examples=100, deadline=5000.)
     @hypothesis.given(
