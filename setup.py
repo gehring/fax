@@ -1,6 +1,6 @@
 from setuptools import setup, find_namespace_packages
 
-install_requires = ['numpy', 'scipy', 'absl-py', 'jax', 'jaxlib']
+install_requires = ['numpy', 'scipy', 'absl-py', 'jax', 'jaxlib', 'hypothesis']
 
 setup(
     name='fax',
