@@ -225,7 +225,8 @@ def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
             An new packed optimization state with the updated parameters and
             Lagrange multipliers.
         """
-        grads = (grads[0], tree_util.tree_map(lax.neg, grads[1]))
+        params_grad, multipliers_grad = grads
+        grads = (params_grad, tree_util.tree_map(lax.neg, multipliers_grad))
         return cga_update(i, grads, opt_state, *args, **kwargs)
 
     def get_params(opt_state):
@@ -304,7 +305,8 @@ def cga_ecp(
 
     @jit
     def update(i, opt_state):
-        grads = grad(lagrangian, (0, 1))(*get_params(opt_state))
+        grad_fn = grad(lagrangian, (0, 1))
+        grads = grad_fn(*get_params(opt_state))
         return opt_update(i, grads, opt_state)
 
     solution = fixed_point_iteration(init_x=opt_init(lagrangian_variables),

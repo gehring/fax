@@ -47,7 +47,8 @@ class CGATest(jax.test_util.JaxTestCase):
         @jax.jit
         def step(i, opt_state):
             params = get_params(opt_state)
-            grads = jax.grad(lagrangian, (0, 1))(*params)
+            grad_fn = jax.grad(lagrangian, (0, 1))
+            grads = grad_fn(*params)
             return opt_update(i, grads, opt_state)
 
         opt_state = opt_init(lagr_params)
@@ -114,8 +115,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         def smooth_bellman_optimality_operator(x, params):
             transition, reward, discount, temperature = params
-            return reward + discount * np.einsum('ast,t->sa', transition, temperature *
-                                                 logsumexp((1. / temperature) * x, axis=1))
+            return reward + discount * np.einsum('ast,t->sa', transition, temperature * logsumexp((1. / temperature) * x, axis=1))
 
         @jax.jit
         def objective(x, params):

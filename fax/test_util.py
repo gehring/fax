@@ -1,3 +1,5 @@
+from typing import Callable
+
 import hypothesis.extra.numpy
 
 import numpy as onp
@@ -162,7 +164,7 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
                                 rtol=1e-5, atol=1e-5)
 
 
-def constrained_opt_problem(n):
+def constrained_opt_problem(n) -> (Callable, Callable, np.array, float):
     def func(params):
         return params[0]
 
