@@ -2,6 +2,7 @@ import collections
 import warnings
 
 import jax
+import jax.lax
 import jax.numpy as np
 
 FixedPointSolution = collections.namedtuple(
@@ -28,8 +29,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
     x_old = None
 
     for _ in range(num_iter):
-        x_old = x
-        x = func(i, x_old)
+        x, x_old = func(i, x), x
         i = i + 1
 
     if return_last_two:
@@ -39,7 +39,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
 
 
 def fixed_point_iteration(init_x, func, convergence_test, max_iter,
-                          batched_iter_size=1, unroll=False):
+                          batched_iter_size=1, unroll=False, f=None):
     """Find a fixed point of `func` by repeatedly applying `func`.
 
     Use this function to find a fixed point of `func` by repeatedly applying
@@ -111,13 +111,11 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
         return np.logical_not(converged)
 
     def body(args):
-        i, x_new, _ = args
-        i_new, x_new, x_old = unrolled(i, x_new, func, batched_iter_size,
-                                       return_last_two=True)
+        i, x_new, _x_old = args
+        i_new, x_new, x_old = unrolled(i, x_new, func, batched_iter_size, return_last_two=True)
         return i_new, x_new, x_old
 
-    init_vals = unrolled(0, init_x, func, batched_iter_size,
-                         return_last_two=True)
+    init_vals = unrolled(0, init_x, func, batched_iter_size, return_last_two=True)
 
     if unroll:
         if max_batched_iter is None:
@@ -136,7 +134,6 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
                 xs=np.arange(max_batched_iter - 1),
             )
         converged = convergence_test(sol, prev_sol)
-
     else:
         iterations, sol, prev_sol = jax.lax.while_loop(
             cond,
