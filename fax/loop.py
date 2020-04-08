@@ -104,6 +104,7 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
 
     def cond(args):
         i, x_new, x_old = args
+        x_new, x_old = get_params(x_new), get_params(x_old)
         converged = convergence_test(x_new, x_old)
 
         if max_iter is not None:
