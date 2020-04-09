@@ -52,11 +52,9 @@ class CGATest(jax.test_util.JaxTestCase):
             convergence_test=convergence_test,
             max_iter=max_iter,
             get_params=optimizer_get_params,
+            f=function
         )
         x, y = solution.value
-        # final_val = function(*solution.value)
-        # print(x, y, final_val)
-        print(x - np.zeros_like(x))
         self.assertAllClose(x, np.zeros_like(x), **CGATest.convergence_params)
 
 

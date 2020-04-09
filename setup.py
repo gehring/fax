@@ -13,7 +13,7 @@ setuptools.setup(
         include=['*', 'fax.*'],
         exclude=["*.tests", "*.tests.*", "tests.*", "tests"]
     ),
-    url='',
+    url='https://github.com/gehring/fax',
     license='MIT License',
     author='Clement Gehring',
     author_email='fax-dev@gehring.io',

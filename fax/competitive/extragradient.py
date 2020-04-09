@@ -37,7 +37,9 @@ def rprop_extragradient_optimizer(step_size_x, step_size_y, proj_x=lambda x: x, 
 
     def init(init_values):
         x0, y0 = init_values
-        assert len(x0.shape) == len(y0.shape) == 1
+        assert len(x0.shape) == (len(y0.shape) == 1 or not y0.shape)
+        if not y0.shape:
+            y0 = y0.reshape(-1)
         return (x0, y0), np.ones(x0.shape[0] + y0.shape[0])
 
     def update(i, grads, state):
@@ -62,12 +64,10 @@ def rprop_extragradient_optimizer(step_size_x, step_size_y, proj_x=lambda x: x, 
     return init, update, get_params
 
 
-def sign_adaptive_step(step_size, grads, grad_state, x, y, i, use_rprop=True):
-    grad_x, grad_y = grads
+def sign_adaptive_step(step_size, grads_fn, grad_state, x, y, i, use_rprop=True):
     step_size_x, step_size_y = step_size
 
-    grad_x0 = grad_x(x, y)
-    grad_y0 = grad_y(x, y)
+    grad_x0, grad_y0 = grads_fn(x, y)
     # the next part is to avoid ifs
     #  d |  d + 1 |  d - 1
     #  1 |    2   |    0

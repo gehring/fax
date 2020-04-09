@@ -1,18 +1,16 @@
+import jax
+import jax.numpy as np
+import jax.test_util
+import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as onp
 from numpy import testing
 
 from fax import converge
 from fax import loop
 from fax import test_util
 
-import jax
-import jax.numpy as np
-import jax.test_util
-from jax.config import config
-config.update("jax_enable_x64", True)
+jax.config.config.update("jax_enable_x64", True)
 
 
 class LoopTest(jax.test_util.JaxTestCase):
@@ -80,13 +78,13 @@ class LoopTest(jax.test_util.JaxTestCase):
             return x_old + 1
 
         sol = loop.fixed_point_iteration(
-                init_x=init_x,
-                func=step,
-                convergence_test=convergence_test,
-                max_iter=max_steps,
-                batched_iter_size=1,
-                unroll=unroll,
-            )
+            init_x=init_x,
+            func=step,
+            convergence_test=convergence_test,
+            max_iter=max_steps,
+            batched_iter_size=1,
+            unroll=unroll,
+        )
         self.assertFalse(sol.converged)
         self.assertEqual(sol.iterations, max_steps)
 
@@ -233,7 +231,7 @@ class LoopTest(jax.test_util.JaxTestCase):
 
         def step(i, x):
             del i
-            return x*0.1
+            return x * 0.1
 
         def converge_test(x_new, x_old):
             return np.max(x_new - x_old) < 1e-3
@@ -357,27 +355,26 @@ def _fixedpoint_iteration_solver(unroll,
                                  default_atol=1e-10,
                                  default_max_iter=200,
                                  default_batched_iter_size=1):
+    def fixed_point_iteration_solver(init_x, params):
+        rtol, atol = converge.adjust_tol_for_dtype(default_rtol,
+                                                   default_atol,
+                                                   init_x.dtype)
 
-        def fixed_point_iteration_solver(init_x, params):
-            rtol, atol = converge.adjust_tol_for_dtype(default_rtol,
-                                                       default_atol,
-                                                       init_x.dtype)
+        def convergence_test(x_new, x_old):
+            return converge.max_diff_test(x_new, x_old, rtol, atol)
 
-            def convergence_test(x_new, x_old):
-                return converge.max_diff_test(x_new, x_old, rtol, atol)
+        func = param_func(params)
+        sol = loop.fixed_point_iteration(
+            init_x=init_x,
+            func=func,
+            convergence_test=convergence_test,
+            max_iter=default_max_iter,
+            batched_iter_size=default_batched_iter_size,
+            unroll=unroll,
+        )
 
-            func = param_func(params)
-            sol = loop.fixed_point_iteration(
-                init_x=init_x,
-                func=func,
-                convergence_test=convergence_test,
-                max_iter=default_max_iter,
-                batched_iter_size=default_batched_iter_size,
-                unroll=unroll,
-            )
-
-            return sol
-        return fixed_point_iteration_solver
+        return sol
+    return fixed_point_iteration_solver
 
 
 class UnrolledFixedPointIterationTest(test_util.FixedPointTestCase):
