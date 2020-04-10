@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "fax"
+version = "0.0.4"
+description = "fax: fixed-point jax"
+license = "MIT"
+authors = ["Clement Gehring <fax-dev@gehring.io>"]
+readme = "README.md"
+repository = "https://github.com/gehring/fax"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
+[tool.poetry.dependencies]
+python = "^3.6"
+jax = "^0.1.62"
+jaxlib = "^0.1.43"
+numpy = "^1.18"
+scipy = "^1.4"
+
+[tool.poetry.dev-dependencies]
+absl-py = "^0.9"
+hypothesis = "^5.8"
+pytest = "^5"
