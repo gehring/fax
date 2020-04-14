@@ -2,6 +2,8 @@ from functools import partial
 import logging
 
 import jax
+from jax import numpy as np
+from jax import tree_util
 
 from fax import converge
 from fax import loop
@@ -92,9 +94,8 @@ def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
 
     Returns:
         callable: Binary callable with signature ``f(x_0, params)`` returning a solution ``x``
-            such that ``param_func(params)(x) = x``. The returned callabled is registered as a
-            ``jax.custom_transform`` with its associated VJP rule so that it can be composed with
-            other functions in and end-to-end fashion.
+            such that ``param_func(params)(x) = x``. The returned callable has a registered
+            VJP rule so that it can be composed with other functions in and end-to-end fashion.
     """
     # if no solver is specified, create a default solver
     if forward_solver is None:
@@ -106,16 +107,23 @@ def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
         param_func, default_rtol=default_rtol, default_atol=default_atol,
         default_max_iter=default_max_iter, default_batched_iter_size=default_batched_iter_size)
 
-    @jax.custom_transforms
+    @jax.custom_vjp
     def two_phase_op(init_xs, params):
         return forward_solver(init_xs, params)
 
-    def two_phase_vjp(g, ans, init_xs, params):
+    def two_phase_fwd(init_xs, params):
+        ans = two_phase_op(init_xs, params)
+        return ans, (ans, init_xs, params)
+
+    def two_phase_bwd(res, g):
+        ans, init_xs, params = res
         dvalue, dconverged, diter, dprev_value = g
         # these tensors are returned only for monitoring and have no defined gradient
         del dconverged, diter, dprev_value
-        return adjoint_iteration_vjp(dvalue, ans, init_xs, params)[0]
+        zeroed_xs = tree_util.tree_map(np.zeros_like, init_xs)
+        g_times_d_params = adjoint_iteration_vjp(dvalue, ans, init_xs, params)[0]
+        return zeroed_xs, g_times_d_params
 
-    jax.defvjp(two_phase_op, None, two_phase_vjp)
+    two_phase_op.defvjp(two_phase_fwd, two_phase_bwd)
 
     return two_phase_op
