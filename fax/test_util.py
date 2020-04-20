@@ -4,6 +4,7 @@ import importlib
 import itertools
 import math
 import os
+import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -488,20 +489,29 @@ def maybe_download_tests(work_directory):
 
 def parse_HockSchittkowski_models():
     zip_file_path = maybe_download_tests(tempfile.gettempdir())
+    test_folder = os.path.join(tempfile.gettempdir(), "hs_tests/")
+    if not os.path.exists(test_folder):
+        os.mkdir(test_folder)
 
     with zipfile.ZipFile(zip_file_path) as test_archive:
         for test_case_path in test_archive.filelist:
             with test_archive.open(test_case_path) as test_case:
                 python_code = apm_to_python(test_case.read().decode('utf-8'))
             if python_code is not None:
-                with open(test_case_path.orig_filename.replace(".", "_") + ".py", "w") as fout:
+                with open(test_folder + test_case_path.orig_filename.replace(".", "_") + ".py", "w") as fout:
                     fout.write(python_code)
 
 
 def load_HockSchittkowski_models():
-    models = glob.glob("*_apm.py")
+    models_glob = os.path.join(tempfile.gettempdir(), "hs_tests", "*_apm.py")
+    models = glob.glob(models_glob)
     if not models:
         parse_HockSchittkowski_models()
-        models = glob.glob("*_apm.py")
+        models = glob.glob(models_glob)
     for test_file in models:
-        yield importlib.import_module(test_file[:-3])
+        path, module_file = os.path.split(test_file)
+        module_name = module_file[:-3]
+        sys.path.insert(0, path)
+        module = importlib.import_module(module_name)
+        del sys.path[0]
+        yield module
