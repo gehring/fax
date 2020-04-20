@@ -1,13 +1,29 @@
-import hypothesis.extra.numpy
+import collections
+import glob
+import importlib
+import itertools
+import math
+import os
+import tempfile
+import urllib.request
+import zipfile
+from typing import Callable
 
+import hypothesis.extra.numpy
+import hypothesis.strategies
+import jax
+import jax.numpy as np
+import jax.scipy
+import jax.test_util
 import numpy as onp
 from numpy import testing
 
-import jax
-import jax.numpy as np
-import jax.test_util
-import jax.scipy
-from jax.experimental import stax
+_basic_math_context = {}
+for m in dir(math):
+    try:
+        _basic_math_context[m] = np.__getattribute__(m)
+    except AttributeError:
+        pass
 
 
 def generate_stable_matrix(size, eps=1e-2):
@@ -140,6 +156,7 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         solver = self.make_solver(param_ax_plus_b)
 
         def loss(x, params): return np.sum(solver(x, params).value)
+
         jax.test_util.check_grads(
             loss,
             (x0, (matrix, offset),),
@@ -151,7 +168,6 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         self.assertSimpleContractionGradient(loss, x0, matrix, offset)
 
     def assertSimpleContractionGradient(self, loss, x0, matrix, offset):
-
         grad_matrix, grad_offset = jax.grad(loss, 1)(x0, (matrix, offset))
 
         true_grad_matrix, true_grad_offset = solve_grad_ax_b(matrix, offset)
@@ -162,14 +178,14 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
                                 rtol=1e-5, atol=1e-5)
 
 
-def constrained_opt_problem(n):
+def constrained_opt_problem(n) -> (Callable, Callable, np.array, float):
     def func(params):
         return params[0]
 
     def equality_constraints(params):
-        return np.sum(params**2) - 1
+        return np.sum(params ** 2) - 1
 
-    optimal_solution = np.array([1.] + [0.]*(n-1))
+    optimal_solution = np.array([1.] + [0.] * (n - 1))
 
     optimal_value = -1.
     return func, equality_constraints, optimal_solution, optimal_value
@@ -188,7 +204,304 @@ def dot_product_minimization(v):
     def equality_constraints(u):
         return np.linalg.norm(u) - 1
 
-    optimal_solution = -(1./np.linalg.norm(v))*v
+    optimal_solution = -(1. / np.linalg.norm(v)) * v
     optimal_value = np.dot(optimal_solution, v)
 
     return func, equality_constraints, optimal_solution, optimal_value
+
+
+def get_list(rows):
+    param_list = []
+    skipped = []
+    for row in rows:
+        row_text = row.lstrip()
+        if not row_text:
+            continue
+
+        if row_text.startswith("!"):
+            skipped.append(row_text)
+            continue
+
+        if {">=", "<=", "<", ">"}.intersection(row_text):
+            raise NotImplementedError("no inequalities")
+
+        if row_text[0].isupper() and row.replace(" ", "").isalpha():
+            assert row_text.startswith("End")
+            return param_list, skipped
+        else:
+            param_list.append(row_text)
+    raise ValueError
+
+
+def get_struct(rows):
+    struct = {}
+    skipped = []
+    for row in rows:
+        # print(row)
+        if not row:
+            continue
+
+        if row[0] == '!' or row[0] == '#':
+            skipped.append(row)
+            continue
+
+        row_text = row.lstrip()
+        if row_text == "End Model":
+            continue
+
+        if row_text[0].isupper():
+            struct[row_text], skipped_ = get_struct(rows)
+            skipped.extend(skipped_)
+        else:
+            params, skipped_ = get_list(itertools.chain([row], rows))
+            skipped.extend(skipped_)
+            return params, skipped
+    return struct, skipped
+
+
+def parse_apm(text):
+    # assert text.count("Model") == 2
+    if "Intermediates" in text:
+        return
+    if "does not exist" in text:
+        return
+    rows = iter(text.splitlines())
+    try:
+        struct, skipped = get_struct(rows)
+    except NotImplementedError:
+        return
+
+    assert len(struct) == 1
+
+    for model, model_struct in struct.items():
+        closure = {}
+        var_sizes = collections.defaultdict(int)
+        for obj in model_struct["Variables"]:
+            if obj == "obj":
+                continue
+
+            variable, value = obj.split("=")
+            var, size = variable.split("[")
+            size, _ = size.split("]")
+            if ":" in size:
+                size = max(int(s) for s in size.split(":"))
+            else:
+                size = int(size)
+
+            var_sizes[var] = max(var_sizes[var], size)
+
+        for k, v in var_sizes.items():
+            closure[k] = np.zeros(v)
+
+        # print(closure)
+        for obj in model_struct["Equations"]:
+            variable, equation = (o.strip() for o in obj.split("="))
+
+            if "obj" in variable:
+                # By default we maximize here.
+                equation = "-" + equation
+
+                cost_function = text_to_code(variable, equation, closure)
+                exec(cost_function, _basic_math_context, closure)
+
+    assert "obj" in closure and len(closure) > 1
+    # print("================================================================")
+    for idx, comment in enumerate(skipped):
+        if "! best known objective =" in comment:
+            _, optimal_solution = comment.split("=")
+
+            optimal_solution = eval(optimal_solution.strip(), {}, _basic_math_context)
+            optimal_solution = -np.array(float(optimal_solution))
+            break
+    else:
+        raise ValueError("No solution found")
+    del skipped[idx]
+
+    (model_name, model_struct), = list(struct.items())
+
+    # print("================================================================")
+    # print("Model:", model_name)
+    # print("Skipped:")
+    # pprint.pprint(skipped)
+    # print("struct:")
+    # pprint.pprint(model_struct)
+    # print("================================================================")
+
+    func = closure['obj']
+    func.__str__ = lambda: model_name
+
+    state_space = closure['x']
+    constraints = []
+
+    for equation in model_struct['Equations']:
+        lhs, rhs = equation.split("=")
+        if lhs.strip() != 'obj':
+            if not set(rhs.strip()).difference({'0', '.', ','}):
+                lhs = f"{lhs} - {rhs}"
+
+            constraint_variable = f"h{len(constraints)}"
+            closure = {"x": state_space.copy(), }
+
+            # TODO: split in two steps, load and dump python ascii code + exec
+            cost_function = text_to_code(constraint_variable, lhs, closure)
+            # print("Costraint:", cost_function)
+            exec(cost_function, {}, closure)
+            constraints.append(closure[constraint_variable])
+
+    if not constraints or len(constraints) > 1:
+        # print("SKIPPING", constraints)
+        return
+
+    def equality_constraints(params):
+        if len(constraints) > 1:
+            raise NotImplementedError
+
+        constraint, = constraints
+        return constraint(params)
+
+    # optimal_solution = np.array([1.] + [0.] * (n - 1))
+    # optimal_value = -1.
+
+    # maximise fx - lambda
+    return func, equality_constraints, optimal_solution, state_space
+
+
+def text_to_code(variable, equation, closure):
+    cost_function = equation.replace("^", "**")
+    seq = []
+    for a in cost_function.split("]"):
+        if "[" not in a:
+            seq.append(a)
+        else:
+            rest, num = a.split("[")
+            b = f"{rest}[{int(num) - 1}"
+            seq.append(b)
+    cost_function = "]".join(seq)
+    scope = ", ".join(k for k in closure.keys() if not k.startswith("__"))
+    cost_function_ = f"{variable} = lambda {scope}: {cost_function}"
+    return cost_function_
+
+
+def apm_to_python(text):
+    # assert text.count("Model") == 2
+    if "Intermediates" in text:
+        return
+    if "does not exist" in text:
+        return
+    python_code = "from jax.numpy import *\n"
+    rows = iter(text.splitlines())
+    try:
+        struct, skipped = get_struct(rows)
+    except NotImplementedError:
+        return
+
+    assert len(struct) == 1
+
+    for model, model_struct in struct.items():
+        var_sizes = collections.defaultdict(int)
+        for obj in model_struct["Variables"]:
+            if obj == "obj":
+                continue
+
+            variable, value = obj.split("=")
+            var, size = variable.split("[")
+            size, _ = size.split("]")
+            if ":" in size:
+                size = max(int(s) for s in size.split(":"))
+            else:
+                size = int(size)
+
+            var_sizes[var] = max(var_sizes[var], size)
+
+        for k, v in var_sizes.items():
+            python_code += f"{k} = zeros({v})\n"
+
+        # print(closure)
+        for obj in model_struct["Equations"]:
+            variable, equation = (o.strip() for o in obj.split("="))
+
+            if "obj" in variable:
+                # By default we maximize here.
+                equation = "-" + equation
+
+                cost_function = text_to_code(variable, equation, var_sizes)
+                python_code += cost_function + "\n"
+                # exec(cost_function, _basic_math_context, closure)
+
+    # print("================================================================")
+    for idx, comment in enumerate(skipped):
+        if "! best known objective =" in comment:
+            _, optimal_solution = comment.split("=")
+
+            # optimal_solution = eval(optimal_solution.strip(), {}, _basic_math_context)
+            python_code += f"optimal_solution = -array({optimal_solution.strip()})\n"
+            break
+    else:
+        raise ValueError("No solution found")
+    del skipped[idx]
+
+    (model_name, model_struct), = list(struct.items())
+
+    # print("================================================================")
+    # print("Model:", model_name)
+    # print("Skipped:")
+    # pprint.pprint(skipped)
+    # print("struct:")
+    # pprint.pprint(model_struct)
+    # print("================================================================")
+
+    constraints = 0
+
+    for equation in model_struct['Equations']:
+        lhs, rhs = equation.split("=")
+        if lhs.strip() != 'obj':
+            if not set(rhs.strip()).difference({'0', '.', ','}):
+                lhs = f"{lhs} - {rhs}"
+
+            constraint_variable = f"h{constraints}"
+
+            cost_function = text_to_code(constraint_variable, lhs, {'x': None})
+            # print("Costraint:", cost_function)
+            # exec(cost_function, {}, closure)
+            python_code += cost_function + "\n"
+            constraints += 1
+
+    if constraints != 1:
+        # print("SKIPPING", constraints)
+        return
+
+    return python_code
+
+
+APM_TESTS = "https://apmonitor.com/wiki/uploads/Apps/hs.zip"
+
+
+def maybe_download_tests(work_directory):
+    if not os.path.exists(work_directory):
+        os.mkdir(work_directory)
+    filepath = os.path.join(work_directory, "hs.zip")
+    if not os.path.exists(filepath):
+        filepath, _ = urllib.request.urlretrieve(APM_TESTS, filepath)
+        print('Downloaded test file in', work_directory)
+    return filepath
+
+
+def parse_HockSchittkowski_models():
+    zip_file_path = maybe_download_tests(tempfile.gettempdir())
+
+    with zipfile.ZipFile(zip_file_path) as test_archive:
+        for test_case_path in test_archive.filelist:
+            with test_archive.open(test_case_path) as test_case:
+                python_code = apm_to_python(test_case.read().decode('utf-8'))
+            if python_code is not None:
+                with open(test_case_path.orig_filename.replace(".", "_") + ".py", "w") as fout:
+                    fout.write(python_code)
+
+
+def load_HockSchittkowski_models():
+    models = glob.glob("*_apm.py")
+    if not models:
+        parse_HockSchittkowski_models()
+        models = glob.glob("*_apm.py")
+    for test_file in models:
+        yield importlib.import_module(test_file[:-3])
