@@ -260,113 +260,6 @@ def get_struct(rows):
     return struct, skipped
 
 
-def parse_apm(text):
-    # assert text.count("Model") == 2
-    if "Intermediates" in text:
-        return
-    if "does not exist" in text:
-        return
-    rows = iter(text.splitlines())
-    try:
-        struct, skipped = get_struct(rows)
-    except NotImplementedError:
-        return
-
-    assert len(struct) == 1
-
-    for model, model_struct in struct.items():
-        closure = {}
-        var_sizes = collections.defaultdict(int)
-        for obj in model_struct["Variables"]:
-            if obj == "obj":
-                continue
-
-            variable, value = obj.split("=")
-            var, size = variable.split("[")
-            size, _ = size.split("]")
-            if ":" in size:
-                size = max(int(s) for s in size.split(":"))
-            else:
-                size = int(size)
-
-            var_sizes[var] = max(var_sizes[var], size)
-
-        for k, v in var_sizes.items():
-            closure[k] = np.zeros(v)
-
-        # print(closure)
-        for obj in model_struct["Equations"]:
-            variable, equation = (o.strip() for o in obj.split("="))
-
-            if "obj" in variable:
-                # By default we maximize here.
-                equation = "-" + equation
-
-                cost_function = text_to_code(variable, equation, closure)
-                exec(cost_function, _basic_math_context, closure)
-
-    assert "obj" in closure and len(closure) > 1
-    # print("================================================================")
-    for idx, comment in enumerate(skipped):
-        if "! best known objective =" in comment:
-            _, optimal_solution = comment.split("=")
-
-            optimal_solution = eval(optimal_solution.strip(), {}, _basic_math_context)
-            optimal_solution = -np.array(float(optimal_solution))
-            break
-    else:
-        raise ValueError("No solution found")
-    del skipped[idx]
-
-    (model_name, model_struct), = list(struct.items())
-
-    # print("================================================================")
-    # print("Model:", model_name)
-    # print("Skipped:")
-    # pprint.pprint(skipped)
-    # print("struct:")
-    # pprint.pprint(model_struct)
-    # print("================================================================")
-
-    func = closure['obj']
-    func.__str__ = lambda: model_name
-
-    state_space = closure['x']
-    constraints = []
-
-    for equation in model_struct['Equations']:
-        lhs, rhs = equation.split("=")
-        if lhs.strip() != 'obj':
-            if not set(rhs.strip()).difference({'0', '.', ','}):
-                lhs = f"{lhs} - {rhs}"
-
-            constraint_variable = f"h{len(constraints)}"
-            closure = {"x": state_space.copy(), }
-
-            # TODO: split in two steps, load and dump python ascii code + exec
-            cost_function = text_to_code(constraint_variable, lhs, closure)
-            # print("Costraint:", cost_function)
-            exec(cost_function, {}, closure)
-            constraints.append(closure[constraint_variable])
-
-    if not constraints or len(constraints) > 1:
-        # print("SKIPPING", constraints)
-        return
-
-    def equality_constraints(params):
-        if len(constraints) > 1:
-            raise NotImplementedError
-
-        constraint, = constraints
-        return constraint(params)
-
-    # optimal_solution = np.array([1.] + [0.] * (n - 1))
-    # optimal_value = -1.
-
-    # maximise fx - lambda
-    return func, equality_constraints, optimal_solution, state_space
-
-
 def text_to_code(variable, equation, closure):
     cost_function = equation.replace("^", "**")
     seq = []
@@ -443,14 +336,6 @@ def apm_to_python(text):
 
     (model_name, model_struct), = list(struct.items())
 
-    # print("================================================================")
-    # print("Model:", model_name)
-    # print("Skipped:")
-    # pprint.pprint(skipped)
-    # print("struct:")
-    # pprint.pprint(model_struct)
-    # print("================================================================")
-
     constraints = 0
 
     for equation in model_struct['Equations']:
@@ -514,4 +399,4 @@ def load_HockSchittkowski_models():
         sys.path.insert(0, path)
         module = importlib.import_module(module_name)
         del sys.path[0]
-        yield module
+        yield module.obj, module.h0, module.optimal_solution, module.state_space
