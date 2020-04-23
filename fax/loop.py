@@ -153,7 +153,7 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
 
 def _debug_fixed_point_iteration(init_x, func, convergence_test, max_iter, batched_iter_size=1,
                                  unroll=False, f=None, get_params=lambda x: x) -> FixedPointSolution:
-    max_iter = 200
+    max_iter = 260
 
     xs = []
     ys = []
@@ -173,6 +173,8 @@ def _debug_fixed_point_iteration(init_x, func, convergence_test, max_iter, batch
         while True:
             loop_state = body_fun(loop_state)
             iterations, (x_new, _optimizer_state), prev_sol = loop_state
+            if iterations % 50 == 0 and iterations:
+                plot_process(js, xs, ys)
             player_x_new, player_y_new = x_new
 
             xs.append(player_x_new)
@@ -190,21 +192,24 @@ def _debug_fixed_point_iteration(init_x, func, convergence_test, max_iter, batch
 
     jax.lax.while_loop = jax_while_loop
 
+    plot_process(js, xs, ys)
+    return solution
+
+
+def plot_process(js, xs, ys):
     import matplotlib.pyplot as plt
     plt.grid(True)
     xs = np.array(xs)
     ts = np.arange(len(xs))
-
     plt.title("xs")
-    plt.plot(xs, ts)
-    plt.scatter(xs, np.zeros_like(xs))
+    plt.plot(ts, xs)
+    plt.scatter(np.zeros_like(xs), xs)
     plt.show()
+    # plt.title("ys")
+    # plt.plot(ts, ys)
+    # plt.show()
+    # if js:
+    #     plt.title("js")
+    #     plt.plot(ts, js)
+    # plt.show()
 
-    plt.title("ys")
-    plt.plot(ts, ys)
-    plt.show()
-    if js:
-        plt.title("js")
-        plt.plot(ts, js)
-    plt.show()
-    return solution

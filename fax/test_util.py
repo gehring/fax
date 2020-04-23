@@ -294,9 +294,10 @@ def parse_apm(text):
 
             if "obj" in variable:
                 # By default we maximize here.
-                equation = "-" + equation
+                equation = "-(" + equation + ")"
 
                 cost_function = text_to_code(variable, equation, closure)
+                print(cost_function)
                 exec(cost_function, _basic_math_context, closure)
 
     assert "obj" in closure and len(closure) > 1
@@ -313,17 +314,7 @@ def parse_apm(text):
     del skipped[idx]
 
     (model_name, model_struct), = list(struct.items())
-
-    # print("================================================================")
-    # print("Model:", model_name)
-    # print("Skipped:")
-    # pprint.pprint(skipped)
-    # print("struct:")
-    # pprint.pprint(model_struct)
-    # print("================================================================")
-
     func = closure['obj']
-    func.__str__ = lambda: model_name
 
     state_space = closure['x']
     constraints = []
@@ -358,7 +349,7 @@ def parse_apm(text):
     # optimal_value = -1.
 
     # maximise fx - lambda
-    return func, equality_constraints, optimal_solution, state_space
+    return func, equality_constraints, optimal_solution, state_space, model_name
 
 
 def text_to_code(variable, equation, closure):
