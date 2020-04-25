@@ -38,8 +38,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
         return i, x
 
 
-def fixed_point_iteration(init_x, func, convergence_test, max_iter,
-                          batched_iter_size=1, unroll=False, f=None):
+def fixed_point_iteration(init_x, func, convergence_test, max_iter, batched_iter_size=1, unroll=False, get_params=lambda x: x, f=None) -> FixedPointSolution:
     """Find a fixed point of `func` by repeatedly applying `func`.
 
     Use this function to find a fixed point of `func` by repeatedly applying
@@ -141,6 +140,7 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
             body,
             init_vals,
         )
+        sol, prev_sol = get_params(sol), get_params(prev_sol)
         converged = max_iter is None or iterations < max_iter
 
     return FixedPointSolution(
@@ -153,7 +153,7 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
 
 def _debug_fixed_point_iteration(init_x, func, convergence_test, max_iter, batched_iter_size=1,
                                  unroll=False, f=None, get_params=lambda x: x) -> FixedPointSolution:
-    max_iter = 260
+    # max_iter = 260
 
     xs = []
     ys = []
@@ -173,7 +173,7 @@ def _debug_fixed_point_iteration(init_x, func, convergence_test, max_iter, batch
         while True:
             loop_state = body_fun(loop_state)
             iterations, (x_new, _optimizer_state), prev_sol = loop_state
-            if iterations % 50 == 0 and iterations:
+            if iterations % 50 == 0 and iterations < 1000 or (iterations % 200 == 0):
                 plot_process(js, xs, ys)
             player_x_new, player_y_new = x_new
 

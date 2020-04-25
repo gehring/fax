@@ -66,7 +66,7 @@ def rprop_extragradient_optimizer(step_size_x, step_size_y, proj_x=lambda x: x, 
     return init, update, get_params
 
 
-def adam_extragradient_optimizer(step_size_x, step_size_y, proj_x=lambda x: x, proj_y=lambda y: y, betas=(0.0, 0.9),
+def adam_extragradient_optimizer(step_size_x, step_size_y, proj_x=lambda x: x, proj_y=lambda y: y, betas=(0.3, 0.2),
                                  eps=1e-8, weight_decay=0.) -> (Callable, Callable, Callable):
     """Provides an optimizer interface to the extra-gradient method
 
@@ -124,7 +124,7 @@ def adam_extragradient_optimizer(step_size_x, step_size_y, proj_x=lambda x: x, p
         ybar = proj_y(y0 + delta_y)
 
         if fax.config.DEBUG:
-            print(f"ext {step} x={xbar[1]} dx={grad_fns(x0, y0)[0]} state={grad_state[0][1]}, state2={grad_state[0][1]}, delta_x={delta_x}")
+            print(f"ext {step} x={xbar[1]}\tdx={grad_fns(x0, y0)[0]}\tstate={grad_state[0][1]},\tstate2={grad_state[0][1]}, delta_x={delta_x}")
 
         delta_x, delta_y, grad_state = adam_step(betas, eps, step_sizes, grad_fns, grad_state, xbar, ybar, step)
         x1 = proj_x(x0 - delta_x)

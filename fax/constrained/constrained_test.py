@@ -16,11 +16,12 @@ from fax.competitive import extragradient
 from fax.constrained import make_lagrangian
 
 jax.config.update("jax_enable_x64", True)
-test_params = dict(rtol=1e-3, atol=1e-3, check_dtypes=False)
+test_params = dict(rtol=1e-4, atol=1e-4, check_dtypes=False)
 convergence_params = dict(rtol=1e-5, atol=1e-5)
 benchmark = list(fax.test_util.load_HockSchittkowski_models())
+
 if fax.config.DEBUG:
-    benchmark = [benchmark[1], ]
+    benchmark = [b for b in benchmark if 'hs09' in b[-1]]
 
 """
 class CGATest(jax.test_util.JaxTestCase):
@@ -176,7 +177,7 @@ class EGTest(jax.test_util.JaxTestCase):
         )
 
         res = scipy.optimize.minimize(lambda *args: -objective_function(*args), initial_values[0], method='SLSQP', constraints=cons)
-        scipy_optimal_value = res.fun
+        scipy_optimal_value = -res.fun
         scipy_constraint = equality_constraints(res.x)
 
         print(model_name)
@@ -193,8 +194,8 @@ class EGTest(jax.test_util.JaxTestCase):
         # )
 
         optimizer_init, optimizer_update, optimizer_get_params = extragradient.adam_extragradient_optimizer(
-            step_size_x=jax.experimental.optimizers.inverse_time_decay(1e-2, 50, 0.3, staircase=True),
-            step_size_y=5e-3,
+            step_size_x=jax.experimental.optimizers.inverse_time_decay(1e-1, 50, 0.3, staircase=True),
+            step_size_y=5e-2,
             # step_size_y=jax.experimental.optimizers.inverse_time_decay(1e-3, 50, 0.3, staircase=False),
         )
 
