@@ -2,13 +2,12 @@ import collections
 import glob
 import importlib
 import itertools
-import math
 import os
 import sys
 import tempfile
 import urllib.request
 import zipfile
-from typing import Callable
+from typing import Callable, Text, Union
 
 import hypothesis.extra.numpy
 import hypothesis.strategies
@@ -19,12 +18,7 @@ import jax.test_util
 import numpy as onp
 from numpy import testing
 
-_basic_math_context = {}
-for m in dir(math):
-    try:
-        _basic_math_context[m] = np.__getattribute__(m)
-    except AttributeError:
-        pass
+APM_TESTS = "https://apmonitor.com/wiki/uploads/Apps/hs.zip"
 
 
 def generate_stable_matrix(size, eps=1e-2):
@@ -276,72 +270,39 @@ def text_to_code(variable, equation, closure):
     return cost_function_
 
 
-def apm_to_python(text):
-    # assert text.count("Model") == 2
+def apm_to_python(text: Text) -> Union[Text, None]:
+    """Convert APM format to a python code file.
+
+    Args:
+        text: APM contains of the APM file.
+    """
+
     if "Intermediates" in text:
-        return
+        raise NotImplementedError("Not implemented yet, maybe never.")
     if "does not exist" in text:
-        return
+        raise NotImplementedError("I'm not sure how to handle those.")
+
     python_code = "from jax.numpy import *\n\n\n"
     rows = iter(text.splitlines())
-    try:
-        struct, skipped = get_struct(rows)
-    except NotImplementedError:
-        return
 
-    assert len(struct) == 1
+    struct, skipped = get_struct(rows)
 
-    for model, model_struct in struct.items():
-        var_sizes = collections.defaultdict(int)
-        for obj in model_struct["Variables"]:
-            if obj == "obj":
-                continue
+    if len(struct) != 1:
+        raise NotImplementedError(f"Found {len(struct)} models in a file, only one is supported.")
+    (model_name, model_struct), = struct.items()
 
-            variable, value = obj.split("=")
-            var, size = variable.split("[")
-            size, _ = size.split("]")
-            if ":" in size:
-                size = max(int(s) for s in size.split(":"))
-            else:
-                size = int(size)
+    var_sizes, python_code = _parse_initialization(model_struct, python_code)
+    python_code = parse_equations(model_struct, python_code, var_sizes)
 
-            var_sizes[var] = max(var_sizes[var], size)
+    skipped, python_code = parse_optimal_solution(python_code, skipped)
+    python_code = _parse_constraints(model_struct, python_code)
 
-        if var_sizes:
-            python_code += f"def initialize():\n"
-            python_code += f"\treturn (\n"
-            for k, v in var_sizes.items():
-                python_code += f"\t\tzeros({v}),  # {k}\n"
-            python_code += f"\t)\n\n\n"
+    python_code = python_code.replace("\t", "    ")
+    return python_code
 
-        # print(closure)
-        for obj in model_struct["Equations"]:
-            variable, equation = (o.strip() for o in obj.split("="))
 
-            if "obj" in variable:
-                # By default we maximize here.
-                equation = "-" + equation
-
-                cost_function = text_to_code(variable, equation, var_sizes)
-                cost_function = cost_function.replace("obj =", "objective_function =")
-                python_code += cost_function + "\n"
-                # exec(cost_function, _basic_math_context, closure)
-
-    for idx, comment in enumerate(skipped):
-        if "! best known objective =" in comment:
-            _, optimal_solution = comment.split("=")
-
-            # optimal_solution = eval(optimal_solution.strip(), {}, _basic_math_context)
-            python_code += f"optimal_solution = -array({optimal_solution.strip()})\n"
-            break
-    else:
-        raise ValueError("No solution found")
-    del skipped[idx]
-
-    (model_name, model_struct), = list(struct.items())
-
+def _parse_constraints(model_struct, python_code):
     constraints = 0
-
     for equation in model_struct['Equations']:
         lhs, rhs = equation.split("=")
         if lhs.strip() != 'obj':
@@ -351,20 +312,62 @@ def apm_to_python(text):
             constraint_variable = f"h{constraints}"
 
             cost_function = text_to_code(constraint_variable, lhs, {'x': None})
-            # print("Costraint:", cost_function)
-            # exec(cost_function, {}, closure)
             python_code += cost_function + "\n"
             constraints += 1
-
     if constraints != 1:
-        # print("SKIPPING", constraints)
-        return
-
-    python_code = python_code.replace("\t", "    ")
+        raise NotImplementedError(f"Single constrains only, found {constraints}")
     return python_code
 
 
-APM_TESTS = "https://apmonitor.com/wiki/uploads/Apps/hs.zip"
+def parse_optimal_solution(python_code, skipped):
+    for idx, comment in enumerate(skipped):
+        if "! best known objective =" in comment:
+            _, optimal_solution = comment.split("=")
+
+            python_code += f"optimal_solution = -array({optimal_solution.strip()})\n"
+            break
+    else:
+        raise ValueError("No solution found")
+    del skipped[idx]
+    return skipped, python_code
+
+
+def parse_equations(model_struct, python_code, var_sizes):
+    for obj in model_struct["Equations"]:
+        variable, equation = (o.strip() for o in obj.split("="))
+
+        if "obj" in variable:
+            # By default we maximize here.
+            equation = "-(" + equation + ")"
+
+            cost_function = text_to_code(variable, equation, var_sizes)
+            cost_function = cost_function.replace("obj =", "objective_function =")
+            python_code += cost_function + "\n"
+    return python_code
+
+
+def _parse_initialization(model_struct, python_code):
+    var_sizes = collections.defaultdict(int)
+    for obj in model_struct["Variables"]:
+        if obj == "obj":
+            continue
+
+        variable, value = obj.split("=")
+        var, size = variable.split("[")
+        size, _ = size.split("]")
+        if ":" in size:
+            size = max(int(s) for s in size.split(":"))
+        else:
+            size = int(size)
+
+        var_sizes[var] = max(var_sizes[var], size)
+    if var_sizes:
+        python_code += f"def initialize():\n"
+        python_code += f"\treturn (\n"
+        for k, v in var_sizes.items():
+            python_code += f"\t\tzeros({v}),  # {k}\n"
+        python_code += f"\t)\n\n\n"
+    return var_sizes, python_code
 
 
 def maybe_download_tests(work_directory):
@@ -377,21 +380,25 @@ def maybe_download_tests(work_directory):
     return filepath
 
 
-def parse_HockSchittkowski_models(test_folder):
+def parse_HockSchittkowski_models(test_folder):  # noqa
     zip_file_path = maybe_download_tests(tempfile.gettempdir())
     if not os.path.exists(test_folder):
         os.makedirs(test_folder, exist_ok=True)
 
     with zipfile.ZipFile(zip_file_path) as test_archive:
         for test_case_path in test_archive.filelist:
-            with test_archive.open(test_case_path) as test_case:
-                python_code = apm_to_python(test_case.read().decode('utf-8'))
-            if python_code is not None:
-                with open(test_folder + test_case_path.orig_filename.replace(".", "_") + ".py", "w") as fout:
+            try:
+                with test_archive.open(test_case_path) as test_case:
+                    python_code = apm_to_python(test_case.read().decode('utf-8'))
+            except NotImplementedError:
+                continue
+            else:
+                file_name = test_case_path.orig_filename.replace(".", "_") + ".py"
+                with open(os.path.join(test_folder, file_name), "w") as fout:
                     fout.write(python_code)
 
 
-def load_HockSchittkowski_models():
+def load_HockSchittkowski_models():  # noqa
     tests_folder = os.path.join(os.path.dirname(__file__), "tests", "hs_tests")
     models_glob = os.path.join(tests_folder, "*_apm.py")
     models = glob.glob(models_glob)
@@ -404,4 +411,4 @@ def load_HockSchittkowski_models():
         sys.path.insert(0, path)
         module = importlib.import_module(module_name)
         del sys.path[0]
-        yield module.obj, module.h0, module.optimal_solution, module.state_space
+        yield module.objective_function, module.h0, module.optimal_solution, module.initialize
