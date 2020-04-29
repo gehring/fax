@@ -21,7 +21,10 @@ from fax.constrained import cga_lagrange_min
 from fax.constrained import cga_ecp
 from fax.constrained import slsqp_ecp
 from fax.constrained import implicit_ecp
+import fax.test_util
+
 config.update("jax_enable_x64", True)
+benchmarks = list(fax.test_util.load_HockSchittkowski_models())
 
 
 class CGATest(jax.test_util.JaxTestCase):

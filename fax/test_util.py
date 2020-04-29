@@ -282,7 +282,7 @@ def apm_to_python(text):
         return
     if "does not exist" in text:
         return
-    python_code = "from jax.numpy import *\n"
+    python_code = "from jax.numpy import *\n\n\n"
     rows = iter(text.splitlines())
     try:
         struct, skipped = get_struct(rows)
@@ -307,8 +307,12 @@ def apm_to_python(text):
 
             var_sizes[var] = max(var_sizes[var], size)
 
-        for k, v in var_sizes.items():
-            python_code += f"{k} = zeros({v})\n"
+        if var_sizes:
+            python_code += f"def initialize():\n"
+            python_code += f"\treturn (\n"
+            for k, v in var_sizes.items():
+                python_code += f"\t\tzeros({v}),  # {k}\n"
+            python_code += f"\t)\n\n\n"
 
         # print(closure)
         for obj in model_struct["Equations"]:
@@ -319,10 +323,10 @@ def apm_to_python(text):
                 equation = "-" + equation
 
                 cost_function = text_to_code(variable, equation, var_sizes)
+                cost_function = cost_function.replace("obj =", "objective_function =")
                 python_code += cost_function + "\n"
                 # exec(cost_function, _basic_math_context, closure)
 
-    # print("================================================================")
     for idx, comment in enumerate(skipped):
         if "! best known objective =" in comment:
             _, optimal_solution = comment.split("=")
@@ -356,6 +360,7 @@ def apm_to_python(text):
         # print("SKIPPING", constraints)
         return
 
+    python_code = python_code.replace("\t", "    ")
     return python_code
 
 
@@ -372,11 +377,10 @@ def maybe_download_tests(work_directory):
     return filepath
 
 
-def parse_HockSchittkowski_models():
+def parse_HockSchittkowski_models(test_folder):
     zip_file_path = maybe_download_tests(tempfile.gettempdir())
-    test_folder = os.path.join(tempfile.gettempdir(), "hs_tests/")
     if not os.path.exists(test_folder):
-        os.mkdir(test_folder)
+        os.makedirs(test_folder, exist_ok=True)
 
     with zipfile.ZipFile(zip_file_path) as test_archive:
         for test_case_path in test_archive.filelist:
@@ -388,10 +392,11 @@ def parse_HockSchittkowski_models():
 
 
 def load_HockSchittkowski_models():
-    models_glob = os.path.join(tempfile.gettempdir(), "hs_tests", "*_apm.py")
+    tests_folder = os.path.join(os.path.dirname(__file__), "tests", "hs_tests")
+    models_glob = os.path.join(tests_folder, "*_apm.py")
     models = glob.glob(models_glob)
     if not models:
-        parse_HockSchittkowski_models()
+        parse_HockSchittkowski_models(tests_folder)
         models = glob.glob(models_glob)
     for test_file in models:
         path, module_file = os.path.split(test_file)
