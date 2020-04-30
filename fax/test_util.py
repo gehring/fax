@@ -1,8 +1,10 @@
 import collections
 import itertools
-import math
+import os
+import tempfile
+import urllib.request
 import zipfile
-from typing import Callable
+from typing import Callable, Text, Union
 
 import hypothesis.extra.numpy
 import hypothesis.strategies
@@ -13,12 +15,7 @@ import jax.test_util
 import numpy as onp
 from numpy import testing
 
-_basic_math_context = {}
-for m in dir(math):
-    try:
-        _basic_math_context[m] = np.__getattribute__(m)
-    except AttributeError:
-        pass
+APM_TESTS = "https://apmonitor.com/wiki/uploads/Apps/hs.zip"
 
 
 def generate_stable_matrix(size, eps=1e-2):
@@ -151,7 +148,6 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         solver = self.make_solver(param_ax_plus_b)
 
         def loss(x, params): return np.sum(solver(x, params).value)
-
         jax.test_util.check_grads(
             loss,
             (x0, (matrix, offset),),
@@ -232,7 +228,6 @@ def get_struct(rows):
     struct = {}
     skipped = []
     for row in rows:
-        # print(row)
         if not row:
             continue
 
@@ -254,104 +249,6 @@ def get_struct(rows):
     return struct, skipped
 
 
-def parse_apm(text):
-    # assert text.count("Model") == 2
-    if "Intermediates" in text:
-        return
-    if "does not exist" in text:
-        return
-    rows = iter(text.splitlines())
-    try:
-        struct, skipped = get_struct(rows)
-    except NotImplementedError:
-        return
-
-    assert len(struct) == 1
-
-    for model, model_struct in struct.items():
-        closure = {}
-        var_sizes = collections.defaultdict(int)
-        for obj in model_struct["Variables"]:
-            if obj == "obj":
-                continue
-
-            variable, value = obj.split("=")
-            var, size = variable.split("[")
-            size, _ = size.split("]")
-            if ":" in size:
-                size = max(int(s) for s in size.split(":"))
-            else:
-                size = int(size)
-
-            var_sizes[var] = max(var_sizes[var], size)
-
-        for k, v in var_sizes.items():
-            closure[k] = np.zeros(v)
-
-        # print(closure)
-        for obj in model_struct["Equations"]:
-            variable, equation = (o.strip() for o in obj.split("="))
-
-            if "obj" in variable:
-                # By default we maximize here.
-                equation = "-(" + equation + ")"
-
-                cost_function = text_to_code(variable, equation, closure)
-                print(cost_function)
-                exec(cost_function, _basic_math_context, closure)
-
-    assert "obj" in closure and len(closure) > 1
-    # print("================================================================")
-    for idx, comment in enumerate(skipped):
-        if "! best known objective =" in comment:
-            _, optimal_solution = comment.split("=")
-
-            optimal_solution = eval(optimal_solution.strip(), {}, _basic_math_context)
-            optimal_solution = -np.array(float(optimal_solution))
-            break
-    else:
-        raise ValueError("No solution found")
-    del skipped[idx]
-
-    (model_name, model_struct), = list(struct.items())
-    func = closure['obj']
-
-    state_space = closure['x']
-    constraints = []
-
-    for equation in model_struct['Equations']:
-        lhs, rhs = equation.split("=")
-        if lhs.strip() != 'obj':
-            if not set(rhs.strip()).difference({'0', '.', ','}):
-                lhs = f"{lhs} - {rhs}"
-
-            constraint_variable = f"h{len(constraints)}"
-            closure = {"x": state_space.copy(), }
-
-            # TODO: split in two steps, load and dump python ascii code + exec
-            cost_function = text_to_code(constraint_variable, lhs, closure)
-            # print("Costraint:", cost_function)
-            exec(cost_function, {}, closure)
-            constraints.append(closure[constraint_variable])
-
-    if not constraints or len(constraints) > 1:
-        # print("SKIPPING", constraints)
-        return
-
-    def equality_constraints(params):
-        if len(constraints) > 1:
-            raise NotImplementedError
-
-        constraint, = constraints
-        return constraint(params)
-
-    # optimal_solution = np.array([1.] + [0.] * (n - 1))
-    # optimal_value = -1.
-
-    # maximise fx - lambda
-    return func, equality_constraints, optimal_solution, state_space, model_name
-
-
 def text_to_code(variable, equation, closure):
     cost_function = equation.replace("^", "**")
     seq = []
@@ -368,10 +265,141 @@ def text_to_code(variable, equation, closure):
     return cost_function_
 
 
-def load_HockSchittkowski_models():
-    with zipfile.ZipFile('/home/esac/research/fax/fax/hs.zip') as test_archive:
-        for test_case_path in test_archive.filelist:
-            with test_archive.open(test_case_path) as test_case:
-                retr = parse_apm(test_case.read().decode('utf-8'))
-                if retr is not None:
-                    yield retr
+def apm_to_python(text: Text) -> Union[Text, None]:
+    """Convert APM format to a python code file.
+
+    Args:
+        text: APM contains of the APM file.
+    """
+
+    if "Intermediates" in text:
+        raise NotImplementedError("Not implemented yet, maybe never.")
+    if "does not exist" in text:
+        raise NotImplementedError("I'm not sure how to handle those.")
+    rows = iter(text.splitlines())
+
+    struct, skipped = get_struct(rows)
+
+    if len(struct) != 1:
+        raise NotImplementedError(f"Found {len(struct)} models in a file, only one is supported.")
+    (model_name, model_struct), = struct.items()
+
+    python_code = f"class {model_name.split('Model ')[1].title()}(Hs):\n"
+
+    var_sizes, python_code = _parse_initialization(model_struct, python_code)
+    python_code = _parse_equations(model_struct, python_code, var_sizes)
+
+    skipped, python_code = _parse_optimal_solution(python_code, skipped)
+    python_code = _parse_constraints(model_struct, python_code)
+
+    python_code = python_code.replace("\t", "    ")
+    return python_code
+
+
+def _parse_constraints(model_struct, python_code):
+    constraints = []
+    for equation in model_struct['Equations']:
+        lhs, rhs = equation.split("=")
+        if lhs.strip() != 'obj':
+            if not set(rhs.strip()).difference({'0', '.', ','}):
+                lhs = f"{lhs} - {rhs}"
+
+            constraint_variable = f"h{len(constraints)}"
+
+            cost_function = text_to_code(constraint_variable, lhs, {'x': None})
+            python_code += f"\t{cost_function}\n"
+            constraints.append(constraint_variable)
+
+    if constraints:
+        python_code += f"""
+\tdef constraints(self, x):
+\t\treturn stack((self.{'(x), self.'.join(constraints)}(x)))
+"""
+    return python_code
+
+
+def _parse_optimal_solution(python_code, skipped):
+    for idx, comment in enumerate(skipped):
+        if "! best known objective =" in comment:
+            _, optimal_solution = comment.split("=")
+
+            python_code += f"\toptimal_solution = -array({optimal_solution.strip()})\n"
+            break
+    else:
+        raise ValueError("No solution found")
+    del skipped[idx]
+    return skipped, python_code
+
+
+def _parse_equations(model_struct, python_code, var_sizes):
+    for obj in model_struct["Equations"]:
+        variable, equation = (o.strip() for o in obj.split("="))
+
+        if "obj" in variable:
+            # By default we maximize here.
+            equation = "-(" + equation + ")"
+
+            cost_function = text_to_code(variable, equation, var_sizes)
+            cost_function = cost_function.replace("obj =", "objective_function =")
+            python_code += f"\t{cost_function}\n"
+    return python_code
+
+
+def _parse_initialization(model_struct, python_code):
+    var_sizes = collections.defaultdict(int)
+    for obj in model_struct["Variables"]:
+        if obj == "obj":
+            continue
+
+        variable, value = obj.split("=")
+        var, size = variable.split("[")
+        size, _ = size.split("]")
+        if ":" in size:
+            size = max(int(s) for s in size.split(":"))
+        else:
+            size = int(size)
+
+        var_sizes[var] = max(var_sizes[var], size)
+    if var_sizes:
+        python_code += f"\tinitialize = lambda: (\n"
+        for k, v in var_sizes.items():
+            python_code += f"\t\tzeros({v}),  # {k}\n"
+        python_code += f"\t)\n\n"
+    return var_sizes, python_code
+
+
+def maybe_download_tests(work_directory):
+    if not os.path.exists(work_directory):
+        os.mkdir(work_directory)
+    filepath = os.path.join(work_directory, "hs.zip")
+    if not os.path.exists(filepath):
+        filepath, _ = urllib.request.urlretrieve(APM_TESTS, filepath)
+        print('Downloaded test file in', work_directory)
+    return filepath
+
+
+def parse_HockSchittkowski_models(test_folder):  # noqa
+    zip_file_path = maybe_download_tests(tempfile.gettempdir())
+    if not os.path.exists(test_folder):
+        os.makedirs(test_folder, exist_ok=True)
+
+    with open(os.path.join(test_folder, "HockSchittkowski.py"), "w") as test_definitions:
+        test_definitions.write("from jax.numpy import *\n\n\n")
+        test_definitions.write("class Hs:\n")
+        test_definitions.write("    constraints = lambda: 0\n\n\n")
+
+        with zipfile.ZipFile(zip_file_path) as test_archive:
+            for test_case_path in test_archive.filelist:
+                try:
+                    with test_archive.open(test_case_path) as test_case:
+                        python_code = apm_to_python(test_case.read().decode('utf-8'))
+                except NotImplementedError:
+                    continue
+                else:
+                    test_definitions.write(python_code + "\n\n\n")
+
+
+def load_HockSchittkowski_models():  # noqa
+    import fax.tests.hock_schittkowski_suite
+    for model in fax.tests.hock_schittkowski_suite.load_suite():
+        yield model.objective_function, model.constraints, model.optimal_solution, model.initialize
