@@ -312,8 +312,9 @@ def _parse_constraints(model_struct, python_code):
 
     if constraints:
         python_code += f"""
-\tdef constraints(self, x):
-\t\treturn stack((self.{'(x), self.'.join(constraints)}(x)))
+\t@classmethod
+\tdef constraints(cls, x):
+\t\treturn stack((cls.{'(x), cls.'.join(constraints)}(x), ))
 """
     return python_code
 
@@ -361,10 +362,14 @@ def _parse_initialization(model_struct, python_code):
 
         var_sizes[var] = max(var_sizes[var], size)
     if var_sizes:
-        python_code += f"\tinitialize = lambda: (\n"
-        for k, v in var_sizes.items():
-            python_code += f"\t\tzeros({v}),  # {k}\n"
-        python_code += f"\t)\n\n"
+        python_code += f"\t@staticmethod\n"
+        python_code += f"\tdef initialize():\n"
+        if len(var_sizes) != 1:
+            raise NotImplementedError("There should only be one (multidimensional) state variable")
+
+        (k, v), = var_sizes.items()
+        python_code += f"\t\treturn zeros({v})  # {k}\n\n\n"
+
     return var_sizes, python_code
 
 

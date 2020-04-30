@@ -21,7 +21,7 @@ convergence_params = dict(rtol=1e-5, atol=1e-5)
 benchmark = list(fax.test_util.load_HockSchittkowski_models())
 
 if fax.config.DEBUG:
-    benchmark = [b for b in benchmark if 'hs09' in b[-1]]
+    benchmark = [b for b in benchmark if 'Hs09' in repr(b[0])]
 
 """
 class CGATest(jax.test_util.JaxTestCase):
@@ -158,9 +158,9 @@ class EGTest(jax.test_util.JaxTestCase):
         self.assertAllClose(h, jax.tree_util.tree_map(np.zeros_like, h), **test_params)
 
     @absl.testing.parameterized.parameters(
-        list(dict(zip(['objective_function', 'equality_constraints', 'hs_optimal_value', 'state_space', 'model_name'], b)) for b in benchmark)
+        list(dict(zip(['objective_function', 'equality_constraints', 'hs_optimal_value', 'initial_value'], b)) for b in benchmark)
     )
-    def test_eg_HockSchittkowski(self, objective_function, equality_constraints, hs_optimal_value: np.array, state_space, model_name) -> None:
+    def test_eg_HockSchittkowski(self, objective_function, equality_constraints, hs_optimal_value: np.array, initial_value):
         # TODO: plot real function + costraints
         # TODO: add x[0], initial xs
 
@@ -168,7 +168,10 @@ class EGTest(jax.test_util.JaxTestCase):
             return fax.converge.max_diff_test(x_new, x_old, **convergence_params)
 
         init_mult, lagrangian, get_x = make_lagrangian(objective_function, equality_constraints)
-        initial_values = init_mult(np.zeros(state_space.shape))
+
+        x0 = initial_value()
+        initial_values = init_mult(x0)
+
         final_val, h, x, multiplier = self.eg_solve(lagrangian, convergence_test, equality_constraints, objective_function, get_x, initial_values)
 
         import scipy.optimize
@@ -180,7 +183,7 @@ class EGTest(jax.test_util.JaxTestCase):
         scipy_optimal_value = -res.fun
         scipy_constraint = equality_constraints(res.x)
 
-        print(model_name)
+        print(objective_function)
         print(f"solution: {x} (ours) {res.x} (scipy)")
         print(f"final value: {final_val} (ours) {scipy_optimal_value} (scipy)")
         print(f"constraint: {h} (ours) {scipy_constraint} (scipy)")
