@@ -226,7 +226,6 @@ def get_struct(rows):
     struct = {}
     skipped = []
     for row in rows:
-        # print(row)
         if not row:
             continue
 
@@ -310,7 +309,6 @@ def _parse_constraints(model_struct, python_code):
             constraints.append(constraint_variable)
 
     if constraints:
-        #     raise NotImplementedError(f"Single constrains only, found {constraints}")
         python_code += f"""
 \tdef constraints(self, x):
 \t\treturn stack((self.{'(x), self.'.join(constraints)}(x)))
