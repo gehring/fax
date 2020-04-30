@@ -1,9 +1,6 @@
 import collections
-import glob
-import importlib
 import itertools
 import os
-import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -188,9 +185,6 @@ def constrained_opt_problem(n) -> (Callable, Callable, np.array, float):
 
 def dot_product_minimization(v):
     """Problem: find a u such that np.dot(u, v) is maximum, subject to np.linalg.norm(u) = 1.
-
-    Args:
-        n (integer): Number of components for the fixed vector `v`
     """
 
     def func(u):
@@ -281,8 +275,6 @@ def apm_to_python(text: Text) -> Union[Text, None]:
         raise NotImplementedError("Not implemented yet, maybe never.")
     if "does not exist" in text:
         raise NotImplementedError("I'm not sure how to handle those.")
-
-    python_code = "from jax.numpy import *\n\n\n"
     rows = iter(text.splitlines())
 
     struct, skipped = get_struct(rows)
@@ -291,10 +283,12 @@ def apm_to_python(text: Text) -> Union[Text, None]:
         raise NotImplementedError(f"Found {len(struct)} models in a file, only one is supported.")
     (model_name, model_struct), = struct.items()
 
-    var_sizes, python_code = _parse_initialization(model_struct, python_code)
-    python_code = parse_equations(model_struct, python_code, var_sizes)
+    python_code = f"class {model_name.split('Model ')[1].title()}(Hs):\n"
 
-    skipped, python_code = parse_optimal_solution(python_code, skipped)
+    var_sizes, python_code = _parse_initialization(model_struct, python_code)
+    python_code = _parse_equations(model_struct, python_code, var_sizes)
+
+    skipped, python_code = _parse_optimal_solution(python_code, skipped)
     python_code = _parse_constraints(model_struct, python_code)
 
     python_code = python_code.replace("\t", "    ")
@@ -302,29 +296,34 @@ def apm_to_python(text: Text) -> Union[Text, None]:
 
 
 def _parse_constraints(model_struct, python_code):
-    constraints = 0
+    constraints = []
     for equation in model_struct['Equations']:
         lhs, rhs = equation.split("=")
         if lhs.strip() != 'obj':
             if not set(rhs.strip()).difference({'0', '.', ','}):
                 lhs = f"{lhs} - {rhs}"
 
-            constraint_variable = f"h{constraints}"
+            constraint_variable = f"h{len(constraints)}"
 
             cost_function = text_to_code(constraint_variable, lhs, {'x': None})
-            python_code += cost_function + "\n"
-            constraints += 1
-    if constraints != 1:
-        raise NotImplementedError(f"Single constrains only, found {constraints}")
+            python_code += f"\t{cost_function}\n"
+            constraints.append(constraint_variable)
+
+    if constraints:
+        #     raise NotImplementedError(f"Single constrains only, found {constraints}")
+        python_code += f"""
+\tdef constraints(self, x):
+\t\treturn stack((self.{'(x), self.'.join(constraints)}(x)))
+"""
     return python_code
 
 
-def parse_optimal_solution(python_code, skipped):
+def _parse_optimal_solution(python_code, skipped):
     for idx, comment in enumerate(skipped):
         if "! best known objective =" in comment:
             _, optimal_solution = comment.split("=")
 
-            python_code += f"optimal_solution = -array({optimal_solution.strip()})\n"
+            python_code += f"\toptimal_solution = -array({optimal_solution.strip()})\n"
             break
     else:
         raise ValueError("No solution found")
@@ -332,7 +331,7 @@ def parse_optimal_solution(python_code, skipped):
     return skipped, python_code
 
 
-def parse_equations(model_struct, python_code, var_sizes):
+def _parse_equations(model_struct, python_code, var_sizes):
     for obj in model_struct["Equations"]:
         variable, equation = (o.strip() for o in obj.split("="))
 
@@ -342,7 +341,7 @@ def parse_equations(model_struct, python_code, var_sizes):
 
             cost_function = text_to_code(variable, equation, var_sizes)
             cost_function = cost_function.replace("obj =", "objective_function =")
-            python_code += cost_function + "\n"
+            python_code += f"\t{cost_function}\n"
     return python_code
 
 
@@ -362,11 +361,10 @@ def _parse_initialization(model_struct, python_code):
 
         var_sizes[var] = max(var_sizes[var], size)
     if var_sizes:
-        python_code += f"def initialize():\n"
-        python_code += f"\treturn (\n"
+        python_code += f"\tinitialize = lambda: (\n"
         for k, v in var_sizes.items():
             python_code += f"\t\tzeros({v}),  # {k}\n"
-        python_code += f"\t)\n\n\n"
+        python_code += f"\t)\n\n"
     return var_sizes, python_code
 
 
@@ -385,30 +383,23 @@ def parse_HockSchittkowski_models(test_folder):  # noqa
     if not os.path.exists(test_folder):
         os.makedirs(test_folder, exist_ok=True)
 
-    with zipfile.ZipFile(zip_file_path) as test_archive:
-        for test_case_path in test_archive.filelist:
-            try:
-                with test_archive.open(test_case_path) as test_case:
-                    python_code = apm_to_python(test_case.read().decode('utf-8'))
-            except NotImplementedError:
-                continue
-            else:
-                file_name = test_case_path.orig_filename.replace(".", "_") + ".py"
-                with open(os.path.join(test_folder, file_name), "w") as fout:
-                    fout.write(python_code)
+    with open(os.path.join(test_folder, "HockSchittkowski.py"), "w") as test_definitions:
+        test_definitions.write("from jax.numpy import *\n\n\n")
+        test_definitions.write("class Hs:\n")
+        test_definitions.write("    constraints = lambda: 0\n\n\n")
+
+        with zipfile.ZipFile(zip_file_path) as test_archive:
+            for test_case_path in test_archive.filelist:
+                try:
+                    with test_archive.open(test_case_path) as test_case:
+                        python_code = apm_to_python(test_case.read().decode('utf-8'))
+                except NotImplementedError:
+                    continue
+                else:
+                    test_definitions.write(python_code + "\n\n\n")
 
 
 def load_HockSchittkowski_models():  # noqa
-    tests_folder = os.path.join(os.path.dirname(__file__), "tests", "hs_tests")
-    models_glob = os.path.join(tests_folder, "*_apm.py")
-    models = glob.glob(models_glob)
-    if not models:
-        parse_HockSchittkowski_models(tests_folder)
-        models = glob.glob(models_glob)
-    for test_file in models:
-        path, module_file = os.path.split(test_file)
-        module_name = module_file[:-3]
-        sys.path.insert(0, path)
-        module = importlib.import_module(module_name)
-        del sys.path[0]
-        yield module.objective_function, module.h0, module.optimal_solution, module.initialize
+    import fax.tests.hock_schittkowski_suite
+    for model in fax.tests.hock_schittkowski_suite.load_suite():
+        yield model.objective_function, model.constraints, model.optimal_solution, model.initialize
