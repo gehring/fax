@@ -102,7 +102,3 @@ venv.bak/
 
 # mypy
 .mypy_cache/
-!/jax_fixedpoint_test_manueldelverme.egg-info/
-!/fax.egg-info/
-!/jax_fixedpoint.egg-info/
-!/venv/

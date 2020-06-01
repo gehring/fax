@@ -1,30 +1,28 @@
+import hypothesis.extra.numpy
+import hypothesis.strategies
+import jax.numpy as np
+import jax.test_util
+import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as onp
-
-import hypothesis.extra.numpy
-
-import jax.test_util
-import jax.numpy as np
 from jax import random
 from jax import tree_util
-from jax.experimental import optimizers
-from jax.scipy.special import logsumexp
-from jax.experimental.stax import softmax
 from jax.config import config
+from jax.experimental import optimizers
+from jax.experimental.stax import softmax
+from jax.scipy.special import logsumexp
 
+import fax.tests.hock_schittkowski_suite
 from fax import converge
 from fax import test_util
-from fax.constrained import make_lagrangian
-from fax.constrained import cga_lagrange_min
 from fax.constrained import cga_ecp
-from fax.constrained import slsqp_ecp
+from fax.constrained import cga_lagrange_min
 from fax.constrained import implicit_ecp
-import fax.test_util
+from fax.constrained import make_lagrangian
+from fax.constrained import slsqp_ecp
 
 config.update("jax_enable_x64", True)
-benchmarks = list(fax.test_util.load_HockSchittkowski_models())
+benchmarks = list(fax.tests.hock_schittkowski_suite.load_HockSchittkowski_models())
 
 
 class CGATest(jax.test_util.JaxTestCase):
@@ -72,7 +70,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
     @parameterized.parameters(
         {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}},
-        {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}},)
+        {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}}, )
     @hypothesis.settings(max_examples=10, deadline=5000.)
     @hypothesis.given(
         hypothesis.extra.numpy.arrays(
@@ -80,7 +78,7 @@ class CGATest(jax.test_util.JaxTestCase):
             elements=hypothesis.strategies.floats(0.1, 1)),
     )
     def test_ecp(self, method, kwargs, v):
-        opt_solution = (1./np.linalg.norm(v))*v
+        opt_solution = (1. / np.linalg.norm(v)) * v
 
         def objective(x, y):
             return np.dot(np.asarray([x, y]), v)
@@ -89,7 +87,7 @@ class CGATest(jax.test_util.JaxTestCase):
             return 1 - np.linalg.norm(np.asarray([x, y]))
 
         rng = random.PRNGKey(8413)
-        initial_values = random.uniform(rng, (onp.alen(v),))
+        initial_values = random.uniform(rng, (len(v),))
 
         solution = method(objective, constraints, initial_values, **kwargs)
 
@@ -108,10 +106,10 @@ class CGATest(jax.test_util.JaxTestCase):
         true_transition = np.array([[[0.7, 0.3], [0.2, 0.8]],
                                     [[0.99, 0.01], [0.99, 0.01]]])
         true_reward = np.array(([[-0.45, -0.1],
-                                 [0.5,  0.5]]))
+                                 [0.5, 0.5]]))
         temperature = 1e-2
         true_discount = 0.9
-        initial_distribution = np.ones(2)/2
+        initial_distribution = np.ones(2) / 2
 
         optimal_value = 1.0272727  # pre-computed in other experiments, outside this code
 
@@ -126,13 +124,13 @@ class CGATest(jax.test_util.JaxTestCase):
             policy = softmax((1. / temperature) * x)
             ppi = np.einsum('ast,sa->st', true_transition, policy)
             rpi = np.einsum('sa,sa->s', true_reward, policy)
-            vf = np.linalg.solve(np.eye(true_transition.shape[-1]) - true_discount*ppi, rpi)
+            vf = np.linalg.solve(np.eye(true_transition.shape[-1]) - true_discount * ppi, rpi)
             return initial_distribution @ vf
 
         @jax.jit
         def equality_constraints(x, params):
             transition_logits, reward_hat = params
-            transition_hat = softmax((1./temperature)*transition_logits)
+            transition_hat = softmax((1. / temperature) * transition_logits)
             params = (transition_hat, reward_hat, true_discount, temperature)
             return smooth_bellman_optimality_operator(x, params) - x
 
