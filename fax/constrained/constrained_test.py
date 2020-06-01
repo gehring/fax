@@ -201,6 +201,11 @@ class EGTest(jax.test_util.JaxTestCase):
             step_size_y=5e-2,
             # step_size_y=jax.experimental.optimizers.inverse_time_decay(1e-3, 50, 0.3, staircase=False),
         )
+        exdam = optimizer_init, optimizer_update, optimizer_get_params = extragradient.exdam(
+            step_size_x=jax.experimental.optimizers.inverse_time_decay(1e-1, 50, 0.3, staircase=True),
+            step_size_y=5e-2,
+            # step_size_y=jax.experimental.optimizers.inverse_time_decay(1e-3, 50, 0.3, staircase=False),
+        )
 
         @jax.jit
         def update(i, opt_state):
