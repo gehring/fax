@@ -153,8 +153,6 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter, batched_iter
 
 def _debug_fixed_point_iteration(init_x, func, convergence_test, max_iter, batched_iter_size=1,
                                  unroll=False, f=None, get_params=lambda x: x) -> FixedPointSolution:
-    # max_iter = 260
-
     xs = []
     ys = []
     js = []

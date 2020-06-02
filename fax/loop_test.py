@@ -4,13 +4,14 @@ import jax.test_util
 import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
+from jax.config import config
 from numpy import testing
 
 from fax import converge
 from fax import loop
 from fax import test_util
 
-jax.config.config.update("jax_enable_x64", True)
+config.update("jax_enable_x64", True)
 
 
 class LoopTest(jax.test_util.JaxTestCase):
@@ -374,6 +375,7 @@ def _fixedpoint_iteration_solver(unroll,
         )
 
         return sol
+
     return fixed_point_iteration_solver
 
 
