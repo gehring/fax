@@ -1,4 +1,12 @@
+import functools
+
 from jax import tree_util, lax, numpy as np
+
+division = functools.partial(tree_util.tree_multimap, lax.div)
+add = functools.partial(tree_util.tree_multimap, lax.add)
+sub = functools.partial(tree_util.tree_multimap, lax.sub)
+mul = functools.partial(tree_util.tree_multimap, lax.mul)
+square = functools.partial(tree_util.tree_map, lax.square)
 
 
 def division_constant(constant):
@@ -9,23 +17,15 @@ def division_constant(constant):
 
 
 def multiply_constant(constant):
-    def multiply(a):
-        return tree_util.tree_multimap(lambda _a: _a * constant, a)
-
-    return multiply
-
-
-division = lambda _a, _b: tree_util.tree_multimap(lambda _a, _b: _a / _b, _a, _b)
-add = lambda _a, _b: tree_util.tree_multimap(lambda _a, _b: _a + _b, _a, _b)
-sub = lambda _a, _b: tree_util.tree_multimap(lambda _a, _b: _a - _b, _a, _b)
-
-
-def mul(_a, _b):
-    return tree_util.tree_multimap(lax.mul, _a, _b)
+    return functools.partial(mul, constant)
 
 
 def expand_like(a, b):
     return a * np.ones(b.shape, b.dtype)
 
 
-square = lambda _a: tree_util.tree_map(np.square, _a)
+def make_exp_smoothing(beta):
+    def exp_smoothing(state, var):
+        return multiply_constant(beta)(state) + multiply_constant((1 - beta))(var)
+
+    return exp_smoothing

@@ -3,11 +3,10 @@ from typing import Callable
 import jax.experimental.optimizers
 from jax import np, tree_util
 
-import fax.competitive.sgd
-from fax.jax_utils import add
+from fax.jax_utils import add, division, mul, division_constant, square, make_exp_smoothing
 
 
-def adam_extragradient_optimizer(step_size_x, step_size_y, b1=0.3, b2=0.2, eps=1e-8) -> (Callable, Callable, Callable):
+def adam_descentascent_optimizer(step_size_x, step_size_y, b1=0.3, b2=0.2, eps=1e-8) -> (Callable, Callable, Callable):
     """Construct optimizer triple for Adam.
 
     Args:
@@ -38,13 +37,9 @@ def adam_extragradient_optimizer(step_size_x, step_size_y, b1=0.3, b2=0.2, eps=1
         step_sizes = - step_size_x(step), step_size_y(step)  # negate the step size so that we do gradient ascent-descent
 
         grads = grad_fns(*x0)
-        deltas, optimizer_state = fax.competitive.sgd.adam_step(b1, b2, eps, step_sizes, grads, optimizer_state, step)
+        deltas, optimizer_state = adam_step(b1, b2, eps, step_sizes, grads, optimizer_state, step)
 
-        x_bar = add(x0, deltas)
-
-        grads = grad_fns(*x_bar)  # the gradient is evaluated at x_bar
-        deltas, optimizer_state = fax.competitive.sgd.adam_step(b1, b2, eps, step_sizes, grads, optimizer_state, step)
-        x1 = add(x0, deltas)  # but applied at x_0
+        x1 = add(x0, deltas)
 
         return x1, optimizer_state
 
@@ -53,3 +48,23 @@ def adam_extragradient_optimizer(step_size_x, step_size_y, b1=0.3, b2=0.2, eps=1
         return x
 
     return init, update, get_params
+
+
+def adam_step(beta1, beta2, eps, step_sizes, grads, optimizer_state, step):
+    exp_avg, exp_avg_sq = optimizer_state
+
+    bias_correction1 = 1 - beta1 ** (step + 1)
+    bias_correction2 = 1 - beta2 ** (step + 1)
+
+    exp_avg = tree_util.tree_multimap(make_exp_smoothing(beta1), exp_avg, grads)
+    exp_avg_sq = tree_util.tree_multimap(make_exp_smoothing(beta2), exp_avg_sq, square(grads))
+
+    corrected_moment = division_constant(bias_correction1)(exp_avg)
+    corrected_second_moment = division_constant(bias_correction2)(exp_avg_sq)
+
+    denom = tree_util.tree_multimap(lambda _var: np.sqrt(_var) + eps, corrected_second_moment)
+    step_improvement = division(corrected_moment, denom)
+    delta = mul(step_sizes, step_improvement)
+
+    optimizer_state = exp_avg, exp_avg_sq
+    return delta, optimizer_state
