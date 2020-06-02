@@ -391,7 +391,7 @@ def parse_HockSchittkowski_models(test_folder):  # noqa
     with open(os.path.join(test_folder, "HockSchittkowski.py"), "w") as test_definitions:
         test_definitions.write("from jax.numpy import *\n\n\n")
         test_definitions.write("class Hs:\n")
-        test_definitions.write("    constraints = lambda: 0\n\n\n")
+        test_definitions.write("    constraints = lambda *args: 0.\n\n\n")
 
         with zipfile.ZipFile(zip_file_path) as test_archive:
             for test_case_path in test_archive.filelist:

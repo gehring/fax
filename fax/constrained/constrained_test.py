@@ -20,10 +20,6 @@ test_params = dict(rtol=1e-4, atol=1e-4, check_dtypes=False)
 convergence_params = dict(rtol=1e-5, atol=1e-5)
 benchmark = list(fax.test_util.load_HockSchittkowski_models())
 
-if fax.config.DEBUG:
-    benchmark = [b for b in benchmark if 'Hs09' in repr(b[0])]
-
-"""
 class CGATest(jax.test_util.JaxTestCase):
     def test_cga_lagrange_min(self):
         n = 5
@@ -132,11 +128,10 @@ class CGATest(jax.test_util.JaxTestCase):
         )
         solution = method(objective, equality_constraints, initial_values, **kwargs)
         self.assertAllClose(objective(*solution.value), optimal_value, **test_params)
-"""
 
 
 class EGTest(jax.test_util.JaxTestCase):
-    def DISABLED_test_eg_lagrange_min(self):
+    def test_eg_lagrange_min(self):
         objective_function, equality_constraints, _, opt_val = fax.test_util.constrained_opt_problem(n=5)
 
         def convergence_test(x_new, x_old):
@@ -197,11 +192,6 @@ class EGTest(jax.test_util.JaxTestCase):
         # )
 
         optimizer_init, optimizer_update, optimizer_get_params = extragradient.adam_extragradient_optimizer(
-            step_size_x=jax.experimental.optimizers.inverse_time_decay(1e-1, 50, 0.3, staircase=True),
-            step_size_y=5e-2,
-            # step_size_y=jax.experimental.optimizers.inverse_time_decay(1e-3, 50, 0.3, staircase=False),
-        )
-        exdam = optimizer_init, optimizer_update, optimizer_get_params = extragradient.exdam(
             step_size_x=jax.experimental.optimizers.inverse_time_decay(1e-1, 50, 0.3, staircase=True),
             step_size_y=5e-2,
             # step_size_y=jax.experimental.optimizers.inverse_time_decay(1e-3, 50, 0.3, staircase=False),
