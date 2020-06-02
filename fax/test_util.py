@@ -1,13 +1,13 @@
+from typing import Callable
+
 import hypothesis.extra.numpy
-
-import numpy as onp
-from numpy import testing
-
+import hypothesis.strategies
 import jax
 import jax.numpy as np
-import jax.test_util
 import jax.scipy
-from jax.experimental import stax
+import jax.test_util
+import numpy as onp
+from numpy import testing
 
 
 def generate_stable_matrix(size, eps=1e-2):
@@ -140,6 +140,7 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         solver = self.make_solver(param_ax_plus_b)
 
         def loss(x, params): return np.sum(solver(x, params).value)
+
         jax.test_util.check_grads(
             loss,
             (x0, (matrix, offset),),
@@ -151,7 +152,6 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         self.assertSimpleContractionGradient(loss, x0, matrix, offset)
 
     def assertSimpleContractionGradient(self, loss, x0, matrix, offset):
-
         grad_matrix, grad_offset = jax.grad(loss, 1)(x0, (matrix, offset))
 
         true_grad_matrix, true_grad_offset = solve_grad_ax_b(matrix, offset)
@@ -162,14 +162,14 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
                                 rtol=1e-5, atol=1e-5)
 
 
-def constrained_opt_problem(n):
+def constrained_opt_problem(n) -> (Callable, Callable, np.array, float):
     def func(params):
         return params[0]
 
     def equality_constraints(params):
-        return np.sum(params**2) - 1
+        return np.sum(params ** 2) - 1
 
-    optimal_solution = np.array([1.] + [0.]*(n-1))
+    optimal_solution = np.array([1.] + [0.] * (n - 1))
 
     optimal_value = -1.
     return func, equality_constraints, optimal_solution, optimal_value
@@ -177,9 +177,6 @@ def constrained_opt_problem(n):
 
 def dot_product_minimization(v):
     """Problem: find a u such that np.dot(u, v) is maximum, subject to np.linalg.norm(u) = 1.
-
-    Args:
-        n (integer): Number of components for the fixed vector `v`
     """
 
     def func(u):
@@ -188,7 +185,9 @@ def dot_product_minimization(v):
     def equality_constraints(u):
         return np.linalg.norm(u) - 1
 
-    optimal_solution = -(1./np.linalg.norm(v))*v
+    optimal_solution = -(1. / np.linalg.norm(v)) * v
     optimal_value = np.dot(optimal_solution, v)
 
     return func, equality_constraints, optimal_solution, optimal_value
+
+
