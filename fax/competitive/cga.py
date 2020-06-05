@@ -1,16 +1,14 @@
 import collections
 from functools import partial
-from typing import Tuple
 
 import jax
+import jax.numpy as np
 from jax import lax
 from jax import tree_util
-import jax.numpy as np
 from jax.experimental import optimizers
 
 from fax import converge
 from fax import loop
-from fax.competitive import cg
 
 CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
 
@@ -125,7 +123,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
     step_size_f = optimizers.make_schedule(step_size_f)
     step_size_g = optimizers.make_schedule(step_size_g)
 
-    def init(inputs) -> CGAState:
+    def init(inputs):
         delta_x, delta_y = tree_util.tree_map(np.zeros_like, inputs)
         return CGAState(
             x=inputs[0],
@@ -225,7 +223,7 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
                                     y, delta_y)
         return CGAState(x, y, delta_x, delta_y)
 
-    def get_params(state: CGAState) -> Tuple[np.array, np.array]:
+    def get_params(state):
         return state[:2]
 
     return init, update, get_params

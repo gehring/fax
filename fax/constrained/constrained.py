@@ -2,26 +2,24 @@
 """
 import collections
 
-from scipy.optimize import minimize
-
 import jax
-from jax import lax
-from jax import jit
+import jax.numpy as np
 from jax import grad
 from jax import jacrev
-import jax.numpy as np
+from jax import jit
+from jax import lax
 from jax import tree_util
 from jax.experimental import optimizers
 from jax.flatten_util import ravel_pytree
+from scipy.optimize import minimize
 
-from fax import math
 from fax import converge
+from fax import math
 from fax.competitive import cg
 from fax.competitive import cga
-from fax.loop import fixed_point_iteration
 from fax.implicit.twophase import make_adjoint_fixed_point_iteration
 from fax.implicit.twophase import make_forward_fixed_point_iteration
-
+from fax.loop import fixed_point_iteration
 
 ConstrainedSolution = collections.namedtuple(
     "ConstrainedSolution",
@@ -225,8 +223,7 @@ def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
             An new packed optimization state with the updated parameters and
             Lagrange multipliers.
         """
-        params_grad, multipliers_grad = grads
-        grads = (params_grad, tree_util.tree_map(lax.neg, multipliers_grad))
+        grads = (grads[0], tree_util.tree_map(lax.neg, grads[1]))
         return cga_update(i, grads, opt_state, *args, **kwargs)
 
     def get_params(opt_state):
@@ -305,8 +302,7 @@ def cga_ecp(
 
     @jit
     def update(i, opt_state):
-        grad_fn = grad(lagrangian, (0, 1))
-        grads = grad_fn(*get_params(opt_state))
+        grads = grad(lagrangian, (0, 1))(*get_params(opt_state))
         return opt_update(i, grads, opt_state)
 
     solution = fixed_point_iteration(init_x=opt_init(lagrangian_variables),
