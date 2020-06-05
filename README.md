@@ -6,6 +6,12 @@ Our "competitive differentiation" approach uses [Competitive Gradient Descent](h
 
 See [fax/constrained/constrained_test.py](fax/constrained/constrained_test.py) for examples. Please note that the API is subject to change.
 
+## Installation
+
+```sh
+pip install jax-fixedpoint
+```
+
 ## References
 
 Citing competitive differentiation:
