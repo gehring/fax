@@ -93,7 +93,7 @@ class CGATest(jax.test_util.JaxTestCase):
             return 1 - np.linalg.norm(np.asarray([x, y]))
 
         rng = jax.random.PRNGKey(8413)
-        initial_values = jax.random.uniform(rng, (onp.alen(v),))
+        initial_values = jax.random.uniform(rng, (len(v),))
 
         solution = method(objective, constraints, initial_values, **kwargs)
 

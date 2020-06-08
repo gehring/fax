@@ -1,10 +1,4 @@
-import collections
-import itertools
-import os
-import tempfile
-import urllib.request
-import zipfile
-from typing import Callable, Text, Union
+from typing import Callable
 
 import hypothesis.extra.numpy
 import hypothesis.strategies
@@ -14,8 +8,6 @@ import jax.scipy
 import jax.test_util
 import numpy as onp
 from numpy import testing
-
-APM_TESTS = "https://apmonitor.com/wiki/uploads/Apps/hs.zip"
 
 
 def generate_stable_matrix(size, eps=1e-2):

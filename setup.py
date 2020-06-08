@@ -12,7 +12,7 @@ setup(
     url='',
     license='',
     author='Clement Gehring',
-    author_email='clement.gehring@gmail.com',
+    author_email='fax-dev@gehring.io',
     description='',
     install_requires=install_requires,
 )
