@@ -1,9 +1,7 @@
-from functools import partial
+import functools
 import logging
 
 import jax
-from jax import numpy as np
-from jax import tree_util
 
 from fax import converge
 from fax import loop
@@ -11,10 +9,9 @@ from fax import loop
 logger = logging.getLogger(__name__)
 
 
-def make_forward_fixed_point_iteration(
-        param_func, default_rtol=1e-4, default_atol=1e-4, default_max_iter=5000,
-        default_batched_iter_size=1):
-    def _default_solver(init_x, params):
+def default_solver(param_func, default_rtol=1e-4, default_atol=1e-4,
+                   default_max_iter=5000, default_batched_iter_size=1):
+    def _default_solve(init_x, params):
         rtol, atol = converge.adjust_tol_for_dtype(default_rtol,
                                                    default_atol,
                                                    init_x.dtype)
@@ -32,98 +29,44 @@ def make_forward_fixed_point_iteration(
         )
 
         return sol
-    return _default_solver
+    return _default_solve
 
 
-def make_adjoint_fixed_point_iteration(
-        param_func, default_rtol=1e-4, default_atol=1e-4, default_max_iter=5000,
-        default_batched_iter_size=1):
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0, 1, 3))
+def two_phase_solve(param_func, init_xs, params, solvers=()):
+    if solvers:
+        fwd_solver = solvers[0]
+    else:
+        fwd_solver = default_solver(param_func)
 
-    # define a flat function to fit the vjp API
-    def flat_func(i, x, params):
-        return param_func(params)(i, x)
+    return fwd_solver(init_xs, params)
 
-    def _adjoint_iteration_vjp(g, ans, init_xs, params):
-        dvalue = g
-        del init_xs
-        init_dxs = dvalue
 
-        fp_vjp_fn = jax.vjp(partial(flat_func, ans.iterations),
-                            ans.value, params)[1]
+def two_phase_fwd(param_func, init_xs, params, solvers):
+    sol = two_phase_solve(param_func, init_xs, params, solvers)
+    return sol, (sol.value, params)
 
-        def dfp_fn(i, dout):
-            del i
+
+def two_phase_rev(param_func, init_xs, solvers, res, sol_bar):
+    del init_xs
+
+    def param_dfp_fn(packed_params):
+        v, p, dvalue = packed_params
+        _, fp_vjp_fn = jax.vjp(lambda x: param_func(p)(x), v)
+
+        def dfp_fn(dout):
             dout = fp_vjp_fn(dout)[0] + dvalue
             return dout
 
-        rtol, atol = converge.adjust_tol_for_dtype(
-            default_rtol, default_atol, init_dxs.dtype)
+        return dfp_fn
 
-        def convergence_test(x_new, x_old):
-            return converge.max_diff_test(x_new, x_old, rtol, atol)
-
-        dsol = loop.fixed_point_iteration(
-            init_x=init_dxs,
-            func=dfp_fn,
-            convergence_test=convergence_test,
-            max_iter=default_max_iter,
-            batched_iter_size=default_batched_iter_size,
-        )
-
-        return fp_vjp_fn(dsol.value)[1], dsol
-
-    return _adjoint_iteration_vjp
+    value, params = res
+    dsol = two_phase_solve(param_dfp_fn,
+                           sol_bar.value,
+                           (value, params, sol_bar.value),
+                           solvers[1:])
+    _, dparam_vjp = jax.vjp(lambda p: param_func(p)(value), params)
+    return dparam_vjp(dsol.value)
 
 
-def two_phase_solver(param_func, forward_solver=None, default_rtol=1e-4,
-                     default_atol=1e-4, default_max_iter=5000,
-                     default_batched_iter_size=1):
-    """ Create an implicit function of the parameters and define its VJP rule.
-
-    Args:
-        param_func: A "parametric" operator (i.e., callable) taking in some
-            parameters and returning a function for which we seek a fixed point.
-        forward_solver:
-        default_rtol (float, optional): The relative tolerance (as used by `np.isclose`).
-            Defaults to 1e-4.
-        default_atol (float, optional): The absolute tolerance (as used by `np.isclose`).
-            Defaults to 1e-4.
-        default_max_iter (int, optional): The maximum number of iterations. Defaults to 5000.
-        default_batched_iter_size (int, optional):  The number of iterations to be
-            unrolled and executed per iterations of `while_loop` op. Defaults to 1.
-
-    Returns:
-        callable: Binary callable with signature ``f(x_0, params)`` returning a solution ``x``
-            such that ``param_func(params)(x) = x``. The returned callable has a registered
-            VJP rule so that it can be composed with other functions in and end-to-end fashion.
-    """
-    # if no solver is specified, create a default solver
-    if forward_solver is None:
-        forward_solver = make_forward_fixed_point_iteration(
-            param_func, default_rtol=default_rtol, default_atol=default_atol,
-            default_max_iter=default_max_iter, default_batched_iter_size=default_batched_iter_size)
-
-    adjoint_iteration_vjp = make_adjoint_fixed_point_iteration(
-        param_func, default_rtol=default_rtol, default_atol=default_atol,
-        default_max_iter=default_max_iter, default_batched_iter_size=default_batched_iter_size)
-
-    @jax.custom_vjp
-    def two_phase_op(init_xs, params):
-        return forward_solver(init_xs, params)
-
-    def two_phase_fwd(init_xs, params):
-        ans = two_phase_op(init_xs, params)
-        return ans, (ans, init_xs, params)
-
-    def two_phase_bwd(res, g):
-        ans, init_xs, params = res
-        dvalue, dconverged, diter, dprev_value = g
-        # these tensors are returned only for monitoring and have no defined gradient
-        del dconverged, diter, dprev_value
-        zeroed_xs = tree_util.tree_map(np.zeros_like, init_xs)
-        g_times_d_params = adjoint_iteration_vjp(dvalue, ans, init_xs, params)[0]
-        return zeroed_xs, g_times_d_params
-
-    two_phase_op.defvjp(two_phase_fwd, two_phase_bwd)
-
-    return two_phase_op
+two_phase_solve.defvjp(two_phase_fwd, two_phase_rev)
