@@ -19,7 +19,7 @@ Otherwise on PyPI:
 pip install jax-fixedpoint
 ```
 ## Basic Usage
-The main entry point for Christianson's two-phases reverse accumulation is through `fax.implicit.two_phase_solver`. For example, imagine that have a [fixed-point iteration method](https://en.wikipedia.org/wiki/Fixed-point_iteration) like [Power iteration](https://en.wikipedia.org/wiki/Power_iteration) and want to compute the gradient of the a function of its output. You could write something like: 
+The main entry point for Christianson's two-phases reverse accumulation is through `fax.implicit.two_phase_solver`. For example, imagine that you have a [fixed-point iteration method](https://en.wikipedia.org/wiki/Fixed-point_iteration) like [Power iteration](https://en.wikipedia.org/wiki/Power_iteration) and want to compute the gradient of a function of its output. You could write something like: 
 ```python
 import jax.numpy as jnp
 from jax import grad
@@ -43,7 +43,7 @@ A = jnp.array([[1, 2], [3, 4.]])
 max_eigenvalue = make_objective(A)
 grad(max_eigenvalue)(A)
 ```
-Note how `fax.implicit.two_phase_solver` is able to construct a new function `power_iteration` which takes an initial guess for the fixed-point procedure and operator parameters (``A`` in this case) and returns the fixed-point as output. The magic of `fax.implicit.two_phase_solver`  is that we can now compose `power_iteration` inside another function and JAX will apply the custom [VJP rule](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) defined by FAX when requesting the desired gradient. 
+Note how `fax.implicit.two_phase_solver` is able to construct a new function `power_iteration` which takes an initial guess (`b0`) and operator parameters (``A`` in this case) and returns the fixed-point as output. The magic of `fax.implicit.two_phase_solver`  is that we can now compose `power_iteration` inside another function and JAX will apply the custom [VJP rule](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) defined by FAX when requesting the desired gradient. The function ``power_iteration`` now behaves like an explicit function, yet its gradient is computed in its [implicit](https://en.wikipedia.org/wiki/Implicit_function) form via the implicit function theorem. 
 
 ## References
 
