@@ -19,7 +19,7 @@ Otherwise on PyPI:
 pip install jax-fixedpoint
 ```
 ## Basic Usage
-The main entry point for Christianson's two-phases reverse accumulation is through `fax.implicit.two_phase_solver`. For example, imagine that have a [fixed-point iteration method](https://en.wikipedia.org/wiki/Fixed-point_iteration) like [Power iteration](https://en.wikipedia.org/wiki/Power_iteration) and want to compute the gradient of the a function of its output, you would write something like: 
+The main entry point for Christianson's two-phases reverse accumulation is through `fax.implicit.two_phase_solver`. For example, imagine that have a [fixed-point iteration method](https://en.wikipedia.org/wiki/Fixed-point_iteration) like [Power iteration](https://en.wikipedia.org/wiki/Power_iteration) and want to compute the gradient of the a function of its output. You could write something like: 
 ```python
 import jax.numpy as jnp
 from jax import grad
