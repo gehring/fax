@@ -16,11 +16,9 @@ from jax.flatten_util import ravel_pytree
 
 from fax import math
 from fax import converge
-from fax.competitive import cg
+from fax import implicit
 from fax.competitive import cga
 from fax.loop import fixed_point_iteration
-from fax.implicit.twophase import make_adjoint_fixed_point_iteration
-from fax.implicit.twophase import make_forward_fixed_point_iteration
 
 
 ConstrainedSolution = collections.namedtuple(
@@ -38,7 +36,7 @@ def default_convergence_test(x_new, x_old):
 def implicit_ecp(
         objective, equality_constraints, initial_values, lr_func, max_iter=500,
         convergence_test=default_convergence_test, batched_iter_size=1, optimizer=optimizers.sgd,
-        tol=1e-6):
+        tol=1e-6, constraints_solver=None):
     """Use implicit differentiation to solve a nonlinear equality-constrained program of the form:
 
     max f(x, θ) subject to h(x, θ) = 0 .
@@ -76,63 +74,51 @@ def implicit_ecp(
             `sol.value=func(sol.previous_value)` and allows us to log the size
             of the last step if desired.
     """
-    def _objective(*args):
-        return -objective(*args)
+
+    if constraints_solver is None:
+        constraints_solver = implicit.two_phase_solve
+
+    def _objective(init_xs, params):
+        x_sol = constraints_solver(
+            param_func=make_fp_operator,
+            init_xs=init_xs,
+            params=params,
+        )
+        return -objective(x_sol, params), x_sol
 
     def make_fp_operator(params):
-        def _fp_operator(i, x):
-            del i
+        def _fp_operator(x):
             return x + equality_constraints(x, params)
         return _fp_operator
 
-    constraints_solver = make_forward_fixed_point_iteration(
-        make_fp_operator, default_max_iter=max_iter, default_batched_iter_size=batched_iter_size,
-        default_atol=tol, default_rtol=tol)
-
-    adjoint_iteration_vjp = make_adjoint_fixed_point_iteration(
-        make_fp_operator, default_max_iter=max_iter, default_batched_iter_size=batched_iter_size,
-        default_atol=tol, default_rtol=tol)
-
     opt_init, opt_update, get_params = optimizer(step_size=lr_func)
 
-    grad_objective = grad(_objective, (0, 1))
+    grad_objective = grad(_objective, 1, has_aux=True)
 
-    def update(i, values):
-        old_xstar, opt_state = values
+    def update(values):
+        i, old_xstar, opt_state = values
         old_params = get_params(opt_state)
 
-        forward_solution = constraints_solver(old_xstar, old_params)
+        grads_params, new_xstar = grad_objective(old_xstar, old_params)
+        opt_state = opt_update(i, grads_params, opt_state)
 
-        grads_x, grads_params = grad_objective(forward_solution.value, get_params(opt_state))
-
-        ybar, _ = adjoint_iteration_vjp(
-            grads_x, forward_solution, old_xstar, old_params)
-
-        implicit_grads = tree_util.tree_multimap(
-            lax.add, grads_params, ybar)
-
-        opt_state = opt_update(i, implicit_grads, opt_state)
-
-        return forward_solution.value, opt_state
+        return i + 1, new_xstar, opt_state
 
     def _convergence_test(new_state, old_state):
-        x_new, params_new = new_state[0], get_params(new_state[1])
-        x_old, params_old = old_state[0], get_params(old_state[1])
+        x_new, params_new = new_state[1], get_params(new_state[2])
+        x_old, params_old = old_state[1], get_params(old_state[2])
         return convergence_test((x_new, params_new), (x_old, params_old))
 
     x0, init_params = initial_values
     opt_state = opt_init(init_params)
 
-    solution = fixed_point_iteration(init_x=(x0, opt_state),
+    solution = fixed_point_iteration(init_x=(0, x0, opt_state),
                                      func=update,
                                      convergence_test=jit(_convergence_test),
                                      max_iter=max_iter,
                                      batched_iter_size=batched_iter_size,
                                      unroll=False)
-    return solution._replace(
-        value=(solution.value[0], get_params(solution.value[1])),
-        previous_value=(solution.previous_value[0], get_params(solution.previous_value[1])),
-    )
+    return solution.value[1], get_params(solution.value[2])
 
 
 def make_lagrangian(func, equality_constraints):
@@ -202,14 +188,14 @@ def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
         step_size_g=lr_func if lr_multipliers is None else lr_multipliers,
         f=lagrangian,
         g=neg_lagrangian,
-        linear_op_solver=linear_op_solver or cg.fixed_point_solve,
+        linear_op_solver=linear_op_solver or cga.cg_fixed_point_solve,
         solve_order=solve_order
     )
 
     def lagrange_init(lagrange_params):
         return cga_init(lagrange_params)
 
-    def lagrange_update(i, grads, opt_state, *args, **kwargs):
+    def lagrange_update(grads, opt_state, *args, **kwargs):
         """Update the optimization state of the Lagrangian.
 
         Args:
@@ -226,7 +212,7 @@ def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
             Lagrange multipliers.
         """
         grads = (grads[0], tree_util.tree_map(lax.neg, grads[1]))
-        return cga_update(i, grads, opt_state, *args, **kwargs)
+        return cga_update(grads, opt_state, *args, **kwargs)
 
     def get_params(opt_state):
         return cga_get_params(opt_state)
@@ -302,21 +288,21 @@ def cga_ecp(
     opt_init, opt_update, get_params = cga_lagrange_min(
         lagrangian, lr_func, lr_multipliers, linear_op_solver, solve_order)
 
+    def _convergence_test(x_new, x_old):
+        return default_convergence_test(get_params(x_new), get_params(x_old))
+
     @jit
-    def update(i, opt_state):
+    def update(opt_state):
         grads = grad(lagrangian, (0, 1))(*get_params(opt_state))
-        return opt_update(i, grads, opt_state)
+        return opt_update(grads, opt_state)
 
     solution = fixed_point_iteration(init_x=opt_init(lagrangian_variables),
                                      func=update,
-                                     convergence_test=jit(convergence_test),
+                                     convergence_test=_convergence_test,
                                      max_iter=max_iter,
                                      batched_iter_size=batched_iter_size,
                                      unroll=False)
-    return solution._replace(
-        value=get_params(solution.value)[0],
-        previous_value=get_params(solution.previous_value)[0],
-    )
+    return get_params(solution.value)[0]
 
 
 def slsqp_ecp(objective, equality_constraints, initial_values, max_iter=500, ftol=1e-6):
@@ -362,5 +348,4 @@ def slsqp_ecp(objective, equality_constraints, initial_values, max_iter=500, fto
     solution = minimize(_objective, flat_initial_values, method='SLSQP',
                         constraints=constraints, options=options, jac=gradfun_objective)
 
-    return ConstrainedSolution(
-        value=unravel(solution.x), iterations=solution.nit, converged=solution.success)
+    return unravel(solution.x)

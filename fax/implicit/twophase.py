@@ -2,6 +2,7 @@ import functools
 import logging
 
 import jax
+import jax.numpy as np
 
 from fax import converge
 from fax import loop
@@ -32,7 +33,7 @@ def default_solver(param_func, default_rtol=1e-10, default_atol=1e-10,
     return _default_solve
 
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(0, 1, 3))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0, 3))
 def two_phase_solve(param_func, init_xs, params, solvers=()):
     if solvers:
         fwd_solver = solvers[0]
@@ -47,8 +48,7 @@ def two_phase_fwd(param_func, init_xs, params, solvers):
     return sol, (sol, params)
 
 
-def two_phase_rev(param_func, init_xs, solvers, res, sol_bar):
-    del init_xs
+def two_phase_rev(param_func, solvers, res, sol_bar):
 
     def param_dfp_fn(packed_params):
         v, p, dvalue = packed_params
@@ -66,7 +66,7 @@ def two_phase_rev(param_func, init_xs, solvers, res, sol_bar):
                            (sol, params, sol_bar),
                            solvers[1:])
     _, dparam_vjp = jax.vjp(lambda p: param_func(p)(sol), params)
-    return dparam_vjp(dsol)
+    return jax.tree_map(np.zeros_like, sol), dparam_vjp(dsol)[0]
 
 
 two_phase_solve.defvjp(two_phase_fwd, two_phase_rev)

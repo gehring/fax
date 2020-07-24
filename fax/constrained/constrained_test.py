@@ -46,27 +46,37 @@ class CGATest(jax.test_util.JaxTestCase):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
         @jax.jit
-        def step(i, opt_state):
+        def step(opt_state):
             params = get_params(opt_state)
             grads = jax.grad(lagrangian, (0, 1))(*params)
-            return opt_update(i, grads, opt_state)
+            return opt_update(grads, opt_state)
 
         opt_state = opt_init(lagr_params)
 
         for i in range(500):
             old_params = get_params(opt_state)
-            opt_state = step(i, opt_state)
+            opt_state = step(opt_state)
 
             if convergence_test(get_params(opt_state), old_params):
                 break
 
         final_params = get_params(opt_state)
-        self.assertAllClose(opt_val, func(get_x(final_params)),
-                            check_dtypes=False)
+        self.assertAllClose(
+            opt_val,
+            func(get_x(final_params)),
+            check_dtypes=False,
+            atol=1e-10,
+            rtol=1e-5,
+        )
 
         h = eq_constraints(get_x(final_params))
-        self.assertAllClose(h, tree_util.tree_map(np.zeros_like, h),
-                            check_dtypes=False)
+        self.assertAllClose(
+            tree_util.tree_map(np.zeros_like, h),
+            h,
+            check_dtypes=False,
+            atol=1e-5,
+            rtol=1e-5,
+        )
 
     @parameterized.parameters(
         {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}},
@@ -93,8 +103,11 @@ class CGATest(jax.test_util.JaxTestCase):
 
         self.assertAllClose(
             objective(*opt_solution),
-            objective(*solution.value),
-            check_dtypes=False)
+            objective(*solution),
+            check_dtypes=False,
+            atol=1e-10,
+            rtol=1e-5,
+        )
 
     @parameterized.parameters(
         {'method': implicit_ecp,
@@ -138,9 +151,11 @@ class CGATest(jax.test_util.JaxTestCase):
             np.zeros_like(true_reward),
             (np.zeros_like(true_transition), np.zeros_like(true_reward))
         )
-        solution = method(objective, equality_constraints, initial_values, **kwargs)
+        solution = method(
+            objective, equality_constraints, initial_values, **kwargs)
 
-        self.assertAllClose(objective(*solution.value), optimal_value, check_dtypes=False)
+        self.assertAllClose(
+            objective(*solution), optimal_value, check_dtypes=False, rtol=1e-5)
 
 
 if __name__ == "__main__":
