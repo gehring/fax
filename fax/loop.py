@@ -2,6 +2,7 @@ import collections
 import warnings
 
 import jax
+import jax.lax
 import jax.numpy as np
 
 FixedPointSolution = collections.namedtuple(
@@ -28,8 +29,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
     x_old = None
 
     for _ in range(num_iter):
-        x_old = x
-        x = func(i, x_old)
+        x, x_old = func(i, x), x
         i = i + 1
 
     if return_last_two:
@@ -38,8 +38,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
         return i, x
 
 
-def fixed_point_iteration(init_x, func, convergence_test, max_iter,
-                          batched_iter_size=1, unroll=False):
+def fixed_point_iteration(init_x, func, convergence_test, max_iter, batched_iter_size=1, unroll=False, get_params=lambda x: x, f=None) -> FixedPointSolution:
     """Find a fixed point of `func` by repeatedly applying `func`.
 
     Use this function to find a fixed point of `func` by repeatedly applying
@@ -104,6 +103,7 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
 
     def cond(args):
         i, x_new, x_old = args
+        x_new, x_old = get_params(x_new), get_params(x_old)
         converged = convergence_test(x_new, x_old)
 
         if max_iter is not None:
@@ -136,13 +136,13 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
                 xs=np.arange(max_batched_iter - 1),
             )
         converged = convergence_test(sol, prev_sol)
-
     else:
         iterations, sol, prev_sol = jax.lax.while_loop(
             cond,
             body,
             init_vals,
         )
+        sol, prev_sol = get_params(sol), get_params(prev_sol)
         converged = max_iter is None or iterations < max_iter
 
     return FixedPointSolution(

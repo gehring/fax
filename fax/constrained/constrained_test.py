@@ -1,28 +1,33 @@
+import absl.testing
+import absl.testing.parameterized
 import hypothesis.extra.numpy
 import hypothesis.strategies
+import jax
+import jax.experimental.optimizers
+import jax.nn
 import jax.numpy as np
+import jax.scipy.special
 import jax.test_util
+import jax.tree_util
 import numpy as onp
 from absl.testing import absltest
-from absl.testing import parameterized
-from jax import random
-from jax import tree_util
-from jax.config import config
 from jax.experimental import optimizers
 from jax.experimental.stax import softmax
-from jax.scipy.special import logsumexp
 
-import fax.tests.hock_schittkowski_suite
+import fax
+import fax.test_util
 from fax import converge
 from fax import test_util
+from fax.competitive import extragradient
 from fax.constrained import cga_ecp
 from fax.constrained import cga_lagrange_min
 from fax.constrained import implicit_ecp
 from fax.constrained import make_lagrangian
 from fax.constrained import slsqp_ecp
 
-config.update("jax_enable_x64", True)
-benchmarks = list(fax.tests.hock_schittkowski_suite.load_HockSchittkowski_models())
+jax.config.update("jax_enable_x64", True)
+test_params = dict(rtol=1e-4, atol=1e-4, check_dtypes=False)
+convergence_params = dict(rtol=1e-5, atol=1e-5)
 
 
 class CGATest(jax.test_util.JaxTestCase):
@@ -34,8 +39,8 @@ class CGATest(jax.test_util.JaxTestCase):
 
         init_mult, lagrangian, get_x = make_lagrangian(func, eq_constraints)
 
-        rng = random.PRNGKey(8413)
-        init_params = random.uniform(rng, (n,))
+        rng = jax.random.PRNGKey(8413)
+        init_params = jax.random.uniform(rng, (n,))
         lagr_params = init_mult(init_params)
 
         lr = 0.5
@@ -48,7 +53,8 @@ class CGATest(jax.test_util.JaxTestCase):
         @jax.jit
         def step(i, opt_state):
             params = get_params(opt_state)
-            grads = jax.grad(lagrangian, (0, 1))(*params)
+            grad_fn = jax.grad(lagrangian, (0, 1))
+            grads = grad_fn(*params)
             return opt_update(i, grads, opt_state)
 
         opt_state = opt_init(lagr_params)
@@ -65,10 +71,10 @@ class CGATest(jax.test_util.JaxTestCase):
                             check_dtypes=False)
 
         h = eq_constraints(get_x(final_params))
-        self.assertAllClose(h, tree_util.tree_map(np.zeros_like, h),
+        self.assertAllClose(h, jax.tree_util.tree_map(np.zeros_like, h),
                             check_dtypes=False)
 
-    @parameterized.parameters(
+    @absl.testing.parameterized.parameters(
         {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.5}},
         {'method': slsqp_ecp, 'kwargs': {'max_iter': 1000}}, )
     @hypothesis.settings(max_examples=10, deadline=5000.)
@@ -86,8 +92,8 @@ class CGATest(jax.test_util.JaxTestCase):
         def constraints(x, y):
             return 1 - np.linalg.norm(np.asarray([x, y]))
 
-        rng = random.PRNGKey(8413)
-        initial_values = random.uniform(rng, (len(v),))
+        rng = jax.random.PRNGKey(8413)
+        initial_values = jax.random.uniform(rng, (len(v),))
 
         solution = method(objective, constraints, initial_values, **kwargs)
 
@@ -96,7 +102,7 @@ class CGATest(jax.test_util.JaxTestCase):
             objective(*solution.value),
             check_dtypes=False)
 
-    @parameterized.parameters(
+    @absl.testing.parameterized.parameters(
         {'method': implicit_ecp,
          'kwargs': {'max_iter': 1000, 'lr_func': 0.01, 'optimizer': optimizers.adam}},
         {'method': cga_ecp, 'kwargs': {'max_iter': 1000, 'lr_func': 0.15, 'lr_multipliers': 0.925}},
@@ -115,8 +121,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         def smooth_bellman_optimality_operator(x, params):
             transition, reward, discount, temperature = params
-            return reward + discount * np.einsum('ast,t->sa', transition, temperature *
-                                                 logsumexp((1. / temperature) * x, axis=1))
+            return reward + discount * np.einsum('ast,t->sa', transition, temperature * logsumexp((1. / temperature) * x, axis=1))
 
         @jax.jit
         def objective(x, params):
@@ -141,6 +146,54 @@ class CGATest(jax.test_util.JaxTestCase):
         solution = method(objective, equality_constraints, initial_values, **kwargs)
 
         self.assertAllClose(objective(*solution.value), optimal_value, check_dtypes=False)
+
+
+class EGTest(jax.test_util.JaxTestCase):
+    @absl.testing.parameterized.parameters(fax.test_util.load_HockSchittkowski_models())
+    def test_eg_HockSchittkowski(self, objective_function, equality_constraints, hs_optimal_value: np.array, initial_value):
+        def convergence_test(x_new, x_old):
+            return fax.converge.max_diff_test(x_new, x_old, **convergence_params)
+
+        initialize_multipliers, lagrangian, get_x = make_lagrangian(objective_function, equality_constraints)
+
+        x0 = initial_value()
+        initial_values = initialize_multipliers(x0)
+
+        final_val, h, x, multiplier = self.eg_solve(lagrangian, convergence_test, equality_constraints, objective_function, get_x, initial_values)
+
+        import scipy.optimize
+        constraints = ({'type': 'eq', 'fun': equality_constraints, },)
+
+        res = scipy.optimize.minimize(lambda *args: -objective_function(*args), initial_values[0], method='SLSQP', constraints=constraints)
+        scipy_optimal_value = -res.fun
+        scipy_constraint = equality_constraints(res.x)
+
+        self.assertAllClose(final_val, scipy_optimal_value, **test_params)
+        self.assertAllClose(h, scipy_constraint, **test_params)
+
+    def eg_solve(self, lagrangian, convergence_test, equality_constraints, objective_function, get_x, initial_values):
+        optimizer_init, optimizer_update, optimizer_get_params = extragradient.adam_extragradient_optimizer(
+            step_size_x=jax.experimental.optimizers.inverse_time_decay(1e-1, 50, 0.3, staircase=True),
+            step_size_y=5e-2,
+        )
+
+        @jax.jit
+        def update(i, opt_state):
+            grad_fn = jax.grad(lagrangian, (0, 1))
+            return optimizer_update(i, grad_fn, opt_state)
+
+        solution = fax.loop.fixed_point_iteration(
+            init_x=optimizer_init(initial_values),
+            func=update,
+            convergence_test=convergence_test,
+            max_iter=100000000,
+            get_params=optimizer_get_params,
+            f=lagrangian,
+        )
+        x, multipliers = get_x(solution)
+        final_val = objective_function(x)
+        h = equality_constraints(x)
+        return final_val, h, x, multipliers
 
 
 if __name__ == "__main__":

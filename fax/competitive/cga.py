@@ -2,14 +2,13 @@ import collections
 from functools import partial
 
 import jax
+import jax.numpy as np
 from jax import lax
 from jax import tree_util
-import jax.numpy as np
 from jax.experimental import optimizers
 
 from fax import converge
 from fax import loop
-from fax.competitive import cg
 
 CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
 
