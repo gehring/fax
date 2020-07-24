@@ -9,7 +9,7 @@ from fax import loop
 logger = logging.getLogger(__name__)
 
 
-def default_solver(param_func, default_rtol=1e-4, default_atol=1e-4,
+def default_solver(param_func, default_rtol=1e-10, default_atol=1e-10,
                    default_max_iter=5000, default_batched_iter_size=1):
     def _default_solve(init_x, params):
         rtol, atol = converge.adjust_tol_for_dtype(default_rtol,
@@ -28,7 +28,7 @@ def default_solver(param_func, default_rtol=1e-4, default_atol=1e-4,
             batched_iter_size=default_batched_iter_size,
         )
 
-        return sol
+        return sol.value
     return _default_solve
 
 
@@ -44,7 +44,7 @@ def two_phase_solve(param_func, init_xs, params, solvers=()):
 
 def two_phase_fwd(param_func, init_xs, params, solvers):
     sol = two_phase_solve(param_func, init_xs, params, solvers)
-    return sol, (sol.value, params)
+    return sol, (sol, params)
 
 
 def two_phase_rev(param_func, init_xs, solvers, res, sol_bar):
@@ -60,13 +60,13 @@ def two_phase_rev(param_func, init_xs, solvers, res, sol_bar):
 
         return dfp_fn
 
-    value, params = res
+    sol, params = res
     dsol = two_phase_solve(param_dfp_fn,
-                           sol_bar.value,
-                           (value, params, sol_bar.value),
+                           sol_bar,
+                           (sol, params, sol_bar),
                            solvers[1:])
-    _, dparam_vjp = jax.vjp(lambda p: param_func(p)(value), params)
-    return dparam_vjp(dsol.value)
+    _, dparam_vjp = jax.vjp(lambda p: param_func(p)(sol), params)
+    return dparam_vjp(dsol)
 
 
 two_phase_solve.defvjp(two_phase_fwd, two_phase_rev)

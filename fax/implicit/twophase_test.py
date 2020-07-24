@@ -10,12 +10,9 @@ config.update("jax_enable_x64", True)
 class TwoPhaseOpsTest(test_util.FixedPointTestCase):
 
     def make_solver(self, param_func):
-        return twophase.two_phase_solver(
-            param_func=param_func,
-            default_rtol=1e-10,
-            default_atol=1e-10,
-            default_max_iter=10000,
-        )
+        def solve(x, params):
+            return twophase.two_phase_solve(param_func, x, params)
+        return solve
 
 
 if __name__ == "__main__":

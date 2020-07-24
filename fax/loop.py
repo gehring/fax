@@ -29,7 +29,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
 
     for _ in range(num_iter):
         x_old = x
-        x = func(i, x_old)
+        x = func(x_old)
         i = i + 1
 
     if return_last_two:
