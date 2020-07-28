@@ -173,7 +173,7 @@ def cga_lagrange_min(lagrangian, lr_func, lr_multipliers=None,
             - 'both' (default): Solves the linear system for each player (eq. 3 of Schaefer 2019)
             - 'yx' : Solves for the player behind `y` then updates `x`
             - 'xy' : Solves for the player behind `x` then updates `y`
-            - 'alternate': Solves for `x` update `y`, next iteration solves for y and update `x`
+            - 'alternating': Solves for `x` update `y`, next iteration solves for y and update `x`
 
             Defaults to 'both'
 
