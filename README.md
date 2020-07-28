@@ -21,29 +21,31 @@ pip install jax-fixedpoint
 ## Basic Usage
 The main entry point for Christianson's two-phases reverse accumulation is through `fax.implicit.two_phase_solver`. For example, imagine that you have a [fixed-point iteration method](https://en.wikipedia.org/wiki/Fixed-point_iteration) like [Power iteration](https://en.wikipedia.org/wiki/Power_iteration) and want to compute the gradient of a function of its output. You could write something like: 
 ```python
+from functools import partial
+import jax
 import jax.numpy as jnp
-from jax import grad
-from fax.implicit import two_phase_solver
+from fax import implicit
+
 
 def make_power_iteration(A):
-  def _power_iteration(_, b):
+  def _power_iteration(b):
     b = A @ b
     return b/jnp.linalg.norm(b)
   return _power_iteration
 
 def make_objective(A):
   b0 = jnp.ones((A.shape[0]))
-  power_iteration = two_phase_solver(make_power_iteration)
+  power_iteration = partial(implicit.two_phase_solve, make_power_iteration, b0)
   def _objective(A):
-    b = power_iteration(b0, A).value
+    b = power_iteration(A)
     return (b.T @ A @ b)/(b.T @ b)
   return _objective
   
 A = jnp.array([[1, 2], [3, 4.]])
 max_eigenvalue = make_objective(A)
-grad(max_eigenvalue)(A)
+jax.grad(max_eigenvalue)(A)
 ```
-Note how `fax.implicit.two_phase_solver` is able to construct a new function `power_iteration` which takes an initial guess (`b0`) and operator parameters (``A`` in this case) and returns the fixed-point as output. The magic of `fax.implicit.two_phase_solver`  is that we can now compose `power_iteration` inside another function and JAX will apply the custom [VJP rule](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) defined by FAX when requesting the desired gradient. The function ``power_iteration`` now behaves like an explicit function, yet its gradient is computed in its [implicit](https://en.wikipedia.org/wiki/Implicit_function) form via the implicit function theorem. 
+Given a function and an initial guess, we can use `fax.implicit.two_phase_solve` to construct construct a differentiable function, `power_iteration`, which can compute a matrix's eignvalues. Behind the scene, `fax.implicit.two_phase_solve` tells `jax` to apply a custom [VJP rule](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) which `fax` derives from the fixed-point iteration function that it receives. The function `power_iteration` now behaves like an explicit function, yet its gradient is computed in its [implicit](https://en.wikipedia.org/wiki/Implicit_function) form via the implicit function theorem. 
 
 ## References
 
