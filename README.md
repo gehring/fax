@@ -70,7 +70,7 @@ def objective_non_diff_solver(A):
       power_iteration,
       b0,
       A,
-      solvers=(lambda _, matrix: numpy_max_eig(matrix),),
+      solvers=(lambda f, init_b, matrix: numpy_max_eig(matrix),),
     )
   return (b.T @ A @ b)/(b.T @ b)
   

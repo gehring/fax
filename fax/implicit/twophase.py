@@ -10,14 +10,10 @@ from fax import loop
 logger = logging.getLogger(__name__)
 
 
-def default_solver(param_func, rtol=1e-10, atol=1e-10, max_iter=5000,
-                   batched_iter_size=1):
+def default_solver(rtol=1e-10, atol=1e-10, max_iter=5000, batched_iter_size=1):
     """ Create a simple fixed-point iteration solver.
 
     Args:
-        param_func: A "parametric" operator (i.e., callable) taking in some
-            parameters and returning a function for which we seek a
-            fixed-point.
         rtol (float, optional): The relative tolerance for convergence.
         atol (float, optional): The absolute tolerance for convergence.
         max_iter (int or None): The maximum number of iterations.
@@ -32,7 +28,7 @@ def default_solver(param_func, rtol=1e-10, atol=1e-10, max_iter=5000,
 
     """
 
-    def _default_solve(init_x, params):
+    def _default_solve(param_func, init_x, params):
         dtype = converge.tree_smallest_float_dtype(init_x)
         adjusted_tol = converge.adjust_tol_for_dtype(rtol, atol, dtype)
 
@@ -69,6 +65,13 @@ def two_phase_solve(param_func, init_xs, params, solvers=()):
             for the parametric fixed point and every subsequent solver is used
             recursively to compute arbitrary order derivatives.
 
+            Each solver should be a callable taking in a parametric function
+            (i.e., a callable which returns a callable) for which we seek a
+            fixed-point, the initial guess, and the parameters to use. Except
+            for the first solvers, the function given as first argument to
+            solvers will not be `param_func` but a VJP function derived from
+            `param_func`.
+
     Returns:
         The solution to the parametric fixed-point with reverse differentiation
         rules defined using the implicit function theorem.
@@ -78,9 +81,9 @@ def two_phase_solve(param_func, init_xs, params, solvers=()):
     if solvers:
         fwd_solver = solvers[0]
     else:
-        fwd_solver = default_solver(param_func)
+        fwd_solver = default_solver()
 
-    return fwd_solver(init_xs, params)
+    return fwd_solver(param_func, init_xs, params)
 
 
 def two_phase_fwd(param_func, init_xs, params, solvers):
