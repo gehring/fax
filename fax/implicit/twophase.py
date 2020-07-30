@@ -61,24 +61,40 @@ def two_phase_solve(param_func, init_xs, params, solvers=()):
         params: The parameters to use when evaluating `param_func`.
         solvers (optional): A sequence of solvers to be used for solving for
             the different fixed-point required for solving the given parametric
-            fixed-point and its derivatives. The first solver is used to solve
-            for the parametric fixed point and every subsequent solver is used
-            recursively to compute arbitrary order derivatives.
+            fixed-point and its derivatives. Specifying solvers is optional. If
+            a `None` value is encountered in the sequence, the default solver
+            will be used.
+
+            The first solver in the sequence is used to solve for the
+            parametric fixed point and every subsequent solver is used to
+            compute the derivatives of increasing order. For example,
+            `solvers[1]` is the solver used when computing the first order
+            while `solvers[2]` would be used to solve for the second order
+            derivatives.
 
             Each solver should be a callable taking in a parametric function
             (i.e., a callable which returns a callable) for which we seek a
             fixed-point, the initial guess, and the parameters to use. Except
-            for the first solvers, the function given as first argument to
-            solvers will not be `param_func` but a VJP function derived from
-            `param_func`.
+            for the first solvers, the function given as first argument will
+            not be `param_func` but a VJP function derived from `param_func`.
+
+            Formally, a solver is expected to have the following signature:
+
+            ```
+            ((b -> (a -> a)) -> a -> b) -> a
+            ```
+
+            For `solver[0]`, a is simply the type of `init_xs`, b is the type
+            of `param`.
 
     Returns:
         The solution to the parametric fixed-point with reverse differentiation
         rules defined using the implicit function theorem.
     """
 
-    # if solvers is empty, use the default fixed-point iteration solver
-    if solvers:
+    # If no solver is given or if None is found in its place, use the default
+    # fixed-point iteration solver.
+    if solvers or solvers[0] is None:
         fwd_solver = solvers[0]
     else:
         fwd_solver = default_solver()
