@@ -35,8 +35,7 @@ class LoopTest(jax.test_util.JaxTestCase):
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
-        def step(i, x_old):
-            del i
+        def step(x_old):
             return test_util.ax_plus_b(x_old, matrix, offset)
 
         def solve(x):
@@ -75,8 +74,7 @@ class LoopTest(jax.test_util.JaxTestCase):
         def convergence_test(x_new, x_old):
             return converge.max_diff_test(x_new, x_old, rtol, atol)
 
-        def step(i, x_old):
-            del i
+        def step(x_old):
             return x_old + 1
 
         sol = loop.fixed_point_iteration(
@@ -97,8 +95,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testBatchedLoop(self, unroll):
         max_steps = 10
 
-        def step(i, x):
-            del i
+        def step(x):
             return x - 1
 
         init_x = np.zeros(())
@@ -133,8 +130,7 @@ class LoopTest(jax.test_util.JaxTestCase):
                 "supports differentiation."))
         max_steps = 10
 
-        def step(i, x):
-            del i
+        def step(x):
             return x - 1
 
         init_x = np.zeros(())
@@ -161,8 +157,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testUnrollFixedpointLoop(self):
         max_steps = 10
 
-        def step(i, x):
-            del i
+        def step(x):
             return x - 1
 
         init_x = np.zeros(())
@@ -189,8 +184,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testJITUnrollFixedpointLoop(self):
         max_steps = 10
 
-        def step(i, x):
-            del i
+        def step(x):
             return x - 1
 
         init_x = np.zeros(())
@@ -231,8 +225,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testUnrollGrad(self, jit):
         max_steps = 10
 
-        def step(i, x):
-            del i
+        def step(x):
             return x*0.1
 
         def converge_test(x_new, x_old):
@@ -258,8 +251,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testBatchedRaise(self):
         max_steps = 10
 
-        def step(i, x):
-            del i
+        def step(x):
             return x - 1
 
         def neg_batch():
@@ -299,8 +291,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testNoneMaxIter(self):
         max_steps = None
 
-        def step(i, x):
-            del i
+        def step(x):
             return x + 1
 
         init_x = np.zeros(())
@@ -317,8 +308,7 @@ class LoopTest(jax.test_util.JaxTestCase):
     def testUnrolledLoop(self):
         max_steps = 11
 
-        def step(i, x):
-            del i
+        def step(x):
             return x - 1
 
         init_x = np.zeros(())
@@ -341,7 +331,7 @@ class LoopTest(jax.test_util.JaxTestCase):
 
         loop_x, loop_x_old = (0., 0.)
         for i in range(max_steps):
-            loop_x, loop_x_old = step(i, loop_x), loop_x
+            loop_x, loop_x_old = step(loop_x), loop_x
 
         testing.assert_array_equal(batched_x, single_batched_x)
         testing.assert_array_equal(batched_x, loop_x)
@@ -376,7 +366,7 @@ def _fixedpoint_iteration_solver(unroll,
                 unroll=unroll,
             )
 
-            return sol
+            return sol.value
         return fixed_point_iteration_solver
 
 

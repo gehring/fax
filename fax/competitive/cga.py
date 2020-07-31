@@ -6,12 +6,23 @@ from jax import lax
 from jax import tree_util
 import jax.numpy as np
 from jax.experimental import optimizers
+from jax.scipy.sparse import linalg
 
 from fax import converge
 from fax import loop
-from fax.competitive import cg
 
-CGAState = collections.namedtuple("CGAState", "x y delta_x delta_y")
+CGAState = collections.namedtuple("CGAState", "iter x y delta_x delta_y")
+
+
+def cg_fixed_point_solve(linear_op, bvec, init_x, max_iter=1000, tol=1e-10):
+    sol, _ = linalg.cg(
+        lambda x: tree_util.tree_multimap(jax.lax.sub, x, linear_op(x)),
+        bvec,
+        init_x,
+        tol=tol,
+        maxiter=max_iter,
+    )
+    return sol
 
 
 def make_mixed_jvp(f, first_args, second_args, opposite=False):
@@ -52,20 +63,17 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
     step_size_g = optimizers.make_schedule(step_size_g)
 
     def init(inputs):
+        delta_x, delta_y = tree_util.tree_map(np.zeros_like, inputs)
         return CGAState(
+            iter=0,
             x=inputs[0],
             y=inputs[1],
-            delta_x=np.zeros_like(inputs[0]),
-            delta_y=np.zeros_like(inputs[1]),
+            delta_x=delta_x,
+            delta_y=delta_y,
         )
 
-    def update(i, grads, inputs, *args, **kwargs):
-        if len(inputs) < 4:
-            x, y = inputs
-            delta_x = None
-            delta_y = None
-        else:
-            x, y, delta_x, delta_y = inputs
+    def update(grads, inputs, *args, **kwargs):
+        i, x, y, _, _ = inputs
 
         grad_xf, grad_yg = grads
         eta_f = step_size_f(i)
@@ -88,10 +96,10 @@ def full_solve_cga(step_size_f, step_size_g, f, g):
 
         x = x + eta_f * delta_x
         y = y + eta_g * delta_y
-        return CGAState(x, y, delta_x, delta_y)
+        return CGAState(i + 1, x, y, delta_x, delta_y)
 
     def get_params(state):
-        return state[:2]
+        return state[1:3]
 
     return init, update, get_params
 
@@ -109,16 +117,16 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
             if init_x is None:
                 init_x = bvec
 
-            def _step_default_solver(i, x):
-                del i
+            def _step_default_solver(x):
                 return tree_util.tree_multimap(lax.add, linear_op(x), bvec)
 
-            return loop.fixed_point_iteration(
+            sol = loop.fixed_point_iteration(
                 init_x=init_x,
                 func=_step_default_solver,
                 convergence_test=default_convergence_test,
                 max_iter=default_max_iter,
             )
+            return sol.value
         linear_op_solver = default_solver
 
     step_size_f = optimizers.make_schedule(step_size_f)
@@ -127,19 +135,15 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
     def init(inputs):
         delta_x, delta_y = tree_util.tree_map(np.zeros_like, inputs)
         return CGAState(
+            iter=0,
             x=inputs[0],
             y=inputs[1],
             delta_x=delta_x,
             delta_y=delta_y,
         )
 
-    def update(i, grads, inputs, *args, **kwargs):
-        if len(inputs) < 4:
-            x, y = inputs
-            delta_x = None
-            delta_y = None
-        else:
-            x, y, delta_x, delta_y = inputs
+    def update(grads, inputs, *args, **kwargs):
+        i, x, y, delta_x, delta_y = inputs
 
         grad_xf, grad_yg = grads
 
@@ -168,7 +172,8 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
             delta_x = linear_op_solver(
                 linear_op=linear_op_x,
                 bvec=bx,
-                init_x=init_x).value
+                init_x=init_x,
+            )
 
             return delta_x
 
@@ -182,7 +187,8 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
             delta_y = linear_op_solver(
                 linear_op=linear_op_y,
                 bvec=by,
-                init_x=init_y).value
+                init_x=init_y,
+            )
 
             return delta_y
 
@@ -222,10 +228,10 @@ def cga(step_size_f, step_size_g, f, g, linear_op_solver=None,
                                     x, delta_x)
         y = tree_util.tree_multimap(lambda y, delta_y: y + eta_g * delta_y,
                                     y, delta_y)
-        return CGAState(x, y, delta_x, delta_y)
+        return CGAState(i + 1, x, y, delta_x, delta_y)
 
     def get_params(state):
-        return state[:2]
+        return state[1:3]
 
     return init, update, get_params
 
@@ -325,13 +331,13 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
     grad_yg = jax.grad(g, 1)
     grad_xf = jax.grad(f, 0)
 
-    def step(i, inputs):
-        x, y = inputs[:2]
+    def step(inputs):
+        x, y = get_params(inputs)
         grads = (grad_xf(x, y), grad_yg(x, y))
-        return cga_update(i, grads, inputs)
+        return cga_update(grads, inputs)
 
     def cga_convergence_test(x_new, x_old):
-        return convergence_test(x_new[:2], x_old[:2])
+        return convergence_test(get_params(x_new), get_params(x_old))
 
     solution = loop.fixed_point_iteration(
         init_x=cga_init(init_values),
@@ -341,7 +347,4 @@ def cga_iteration(init_values, f, g, convergence_test, max_iter, step_size_f,
         batched_iter_size=batched_iter_size,
         unroll=unroll,
     )
-    return solution._replace(
-        value=get_params(solution.value),
-        previous_value=get_params(solution.previous_value),
-    )
+    return get_params(solution.value)

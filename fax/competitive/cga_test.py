@@ -15,7 +15,6 @@ import jax.test_util
 from jax.config import config
 
 from fax import converge
-from fax.competitive import cg
 from fax.competitive import cga
 
 config.update("jax_enable_x64", True)
@@ -54,7 +53,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         linear_op_solver = None
         if conj_grad:
-            linear_op_solver = cg.fixed_point_solve
+            linear_op_solver = cga.cg_fixed_point_solve
 
         eta = 0.1
         num_iter = 3000
@@ -86,21 +85,26 @@ class CGATest(jax.test_util.JaxTestCase):
         grad_xf = jax.grad(f, 0)
 
         @jax.jit
-        def step(i, opt_state):
-            x, y = get_params(opt_state)[:2]
+        def step(opt_state):
+            x, y = get_params(opt_state)
             grads = (grad_xf(x, y), grad_yg(x, y))
-            return cga_update(i, grads, opt_state)
+            return cga_update(grads, opt_state)
 
         opt_state = cga_init(init_vals)
         for i in range(num_iter):
-            opt_state = step(i, opt_state)
-            if (np.linalg.norm(opt_state[2]) < 1e-8
-                    and np.linalg.norm(opt_state[3]) < 1e-8):
+            opt_state = step(opt_state)
+            if (np.linalg.norm(opt_state.delta_x) < 1e-8
+                    and np.linalg.norm(opt_state.delta_y) < 1e-8):
                 break
 
         final_values = get_params(opt_state)
-        self.assertAllClose(jax.tree_map(np.zeros_like, final_values),
-                            final_values, check_dtypes=True)
+        self.assertAllClose(
+            jax.tree_map(np.zeros_like, final_values),
+            final_values,
+            check_dtypes=True,
+            atol=1e-5,
+            rtol=1e-5,
+        )
 
     def testCGASolveOrder(self):
         rng = random.PRNGKey(398513)
@@ -115,7 +119,7 @@ class CGATest(jax.test_util.JaxTestCase):
         def g(x, y):
             return -f(x, y)
 
-        linear_op_solver = cg.fixed_point_solve
+        linear_op_solver = cga.cg_fixed_point_solve
 
         eta_f = 0.1
         eta_g = 0.5
@@ -137,12 +141,12 @@ class CGATest(jax.test_util.JaxTestCase):
             )
             opt_state = cga_init(params)
 
-            def step(i, opt_state):
-                x, y = get_params(opt_state)[:2]
+            def step(opt_state):
+                x, y = get_params(opt_state)
                 grads = (grad_xf(x, y), grad_yg(x, y))
-                return cga_update(i, grads, opt_state)
+                return cga_update(grads, opt_state)
 
-            return get_params(step(1, step(0, opt_state)))
+            return get_params(step(step(opt_state)))
 
         orders = ["simultaneous", "alternating", "xy", "yx"]
         results = {order: two_steps(init_vals, order) for order in orders}
@@ -187,7 +191,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         linear_op_solver = None
         if conj_grad:
-            linear_op_solver = cg.fixed_point_solve
+            linear_op_solver = cga.cg_fixed_point_solve
 
         # The hypothesis package takes care of setting the seed of python's
         # random package.
@@ -199,8 +203,13 @@ class CGATest(jax.test_util.JaxTestCase):
         solution = cga.cga_iteration(init_vals, f, g, convergence_test,
                                      max_iter, eta, use_full_matrix=fullmatrix,
                                      linear_op_solver=linear_op_solver, solve_order=order)
-        self.assertAllClose(jax.tree_map(np.zeros_like, solution.value),
-                            solution.value, check_dtypes=True)
+        self.assertAllClose(
+            jax.tree_map(np.zeros_like, solution),
+            solution,
+            check_dtypes=True,
+            atol=1e-5,
+            rtol=1e-5,
+        )
 
     @parameterized.parameters(
         {"fullmatrix": False, "conj_grad": True, "order": "simultaneous"},
@@ -255,7 +264,7 @@ class CGATest(jax.test_util.JaxTestCase):
 
         linear_op_solver = None
         if conj_grad:
-            linear_op_solver = cg.fixed_point_solve
+            linear_op_solver = cga.cg_fixed_point_solve
 
         # The hypothesis package takes care of setting the seed of python's
         # random package.
@@ -282,22 +291,20 @@ class CGATest(jax.test_util.JaxTestCase):
                                      solve_order=order)
 
         # check if tuple type is preserved
-        self.assertTrue(isinstance(tuple_sol.value[0], tuple))
-        self.assertTrue(isinstance(tuple_sol.value[1], tuple))
+        self.assertTrue(isinstance(tuple_sol[0], tuple))
+        self.assertTrue(isinstance(tuple_sol[1], tuple))
 
         # check if tuple type is preserved
-        self.assertTrue(isinstance(tuple_sol.value, tuple))
+        self.assertTrue(isinstance(tuple_sol, tuple))
 
         # check if output is the same for tuple inputs vs a single array
-        self.assertAllClose(tuple((_tree_concatentate(x)
-                                   for x in tuple_sol.value)),
-                            solution.value,
-                            check_dtypes=True,
-                            rtol=1e-8,
-                            atol=1e-8)
-
-        # the number of iterations done should be the same
-        self.assertEqual(tuple_sol.iterations, solution.iterations)
+        self.assertAllClose(
+            tuple((_tree_concatentate(x) for x in tuple_sol)),
+            solution,
+            check_dtypes=True,
+            rtol=1e-8,
+            atol=1e-8,
+        )
 
 
 if __name__ == "__main__":

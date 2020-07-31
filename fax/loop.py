@@ -14,6 +14,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
     """Repeatedly apply a function using a regular python loop.
 
     Args:
+        i (int): the current iteration count.
         init_x: The initial values fed to `func`.
         func (callable): The function which is repeatedly called.
         num_iter (int): The number of times to apply the function `func`.
@@ -29,7 +30,7 @@ def unrolled(i, init_x, func, num_iter, return_last_two=False):
 
     for _ in range(num_iter):
         x_old = x
-        x = func(i, x_old)
+        x = func(x_old)
         i = i + 1
 
     if return_last_two:
@@ -53,8 +54,8 @@ def fixed_point_iteration(init_x, func, convergence_test, max_iter,
     Args:
         init_x: The initial values to be used in `func`.
         func (callable): The function for which we want to find a fixed point.
-            `func` should be of type `int, a -> a` where `a` is the type of
-            `init_x` and the integer correspond to the current iteration count.
+            `func` should be of type `a -> a` where `a` is the type of
+            `init_x`.
         convergence_test (callable): A two argument function of type
             `(a, a) -> bool` that takes in the newest solution and the previous
             solution and returns `True` if they have converged. The fixed point

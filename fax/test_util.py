@@ -82,7 +82,7 @@ def solve_grad_ax_b(amat, bvec):
 
 def param_ax_plus_b(params):
     matrix, offset = params
-    return lambda i, x: ax_plus_b(x, matrix, offset)
+    return lambda x: ax_plus_b(x, matrix, offset)
 
 
 class FixedPointTestCase(jax.test_util.JaxTestCase):
@@ -117,7 +117,7 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         x0 = np.zeros_like(offset)
         solver = self.make_solver(param_ax_plus_b)
 
-        f = lambda *args: solver(*args).value
+        f = lambda *args: solver(*args)
         f_vjp = lambda *args: jax.vjp(f, *args)
         jax.test_util.check_vjp(f, f_vjp, (x0, (matrix, offset)),
                                 rtol=1e-4, atol=1e-4)
@@ -126,7 +126,7 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
         true_sol = solve_ax_b(matrix, offset)
         sol = solver(x0, (matrix, offset))
 
-        testing.assert_allclose(sol.value, true_sol, rtol=1e-5, atol=1e-5)
+        testing.assert_allclose(sol, true_sol, rtol=1e-5, atol=1e-5)
 
     def testGradient(self):
         """
@@ -139,7 +139,7 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
 
         solver = self.make_solver(param_ax_plus_b)
 
-        def loss(x, params): return np.sum(solver(x, params).value)
+        def loss(x, params): return np.sum(solver(x, params))
 
         jax.test_util.check_grads(
             loss,
