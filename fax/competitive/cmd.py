@@ -12,8 +12,8 @@ def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints,
 
     Args:
         obj_func (callable): multivariate callable with signature `f(x,y, *args, **kwargs)`
-        breg_min (callable): Unary callable with signature `Px(x,*args, **kwargs)`
-        breg_max (callable): Unary callable with signature `Py(y,*args, **kwargs)`
+        breg_min (Named tuples of callable): Tuple of unary callables with signature 'BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P","D2P_inv"])' where DP and DP_inv are unary callables with signatures `DP(x,*args, **kwargs)`,'DP_inv(x,*arg,**kwarg)' and D2P, D2P_inv are function of functions (Given an x, returning linear transformation function that can take in another vector to output hessian-vector product).
+        breg_max (Named tuples of callable): Tuple of unary callables
         min_inequality_constraints (callable): Unary callable with signature `h(x, *args, **kwargs)`
         min_equality_constraints (callable): Unary callable with signature `h(x, *args, **kwargs)`
         max_inequality_constraints (callable): Unary callable with signature `g(y, *args, **kwargs)`
@@ -78,3 +78,4 @@ def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints,
         return opt_state[0]
 
     return lagrangian, breg_min_lagrangian, breg_max_lagrangian, init_multipliers, get_params
+
