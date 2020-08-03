@@ -94,7 +94,7 @@ def two_phase_solve(param_func, init_xs, params, solvers=()):
 
     # If no solver is given or if None is found in its place, use the default
     # fixed-point iteration solver.
-    if solvers or solvers[0] is None:
+    if solvers and solvers[0] is not None:
         fwd_solver = solvers[0]
     else:
         fwd_solver = default_solver()
