@@ -4,7 +4,10 @@ import operator
 
 import jax
 import jax.numpy as jnp
-
+from jax import lax
+from jax import tree_util
+from jax.experimental import optimizers
+from jax.scipy.sparse import linalg
 
 def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints,
                     min_equality_constraints, max_inequality_constraints, max_equality_constraints):
@@ -12,7 +15,13 @@ def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints,
 
     Args:
         obj_func (callable): multivariate callable with signature `f(x,y, *args, **kwargs)`
-        breg_min (Named tuples of callable): Tuple of unary callables with signature 'BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P","D2P_inv"])' where DP and DP_inv are unary callables with signatures `DP(x,*args, **kwargs)`,'DP_inv(x,*arg,**kwarg)' and D2P, D2P_inv are function of functions (Given an x, returning linear transformation function that can take in another vector to output hessian-vector product).
+        breg_min (Named tuples of callable): Tuple of unary callables with signature
+                                            'BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P","D2P_inv"])'
+                                            where DP and DP_inv are unary callables with signatures
+                                            `DP(x,*args, **kwargs)`,'DP_inv(x,*arg,**kwarg)' and
+                                            D2P, D2P_inv are function of functions
+                                            (Given an x, returning linear transformation function
+                                            that can take in another vector to output hessian-vector product).
         breg_max (Named tuples of callable): Tuple of unary callables
         min_inequality_constraints (callable): Unary callable with signature `h(x, *args, **kwargs)`
         min_equality_constraints (callable): Unary callable with signature `h(x, *args, **kwargs)`
@@ -79,3 +88,58 @@ def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints,
 
     return lagrangian, breg_min_lagrangian, breg_max_lagrangian, init_multipliers, get_params
 
+
+
+
+
+CMDState = collections.namedtuple("CMDState", "iter minP maxP del_x del_y")
+
+def compose_matrix_func(A,fun):
+    f = lambda x: jnp.dot(A,x)
+    g = lambda x: jnp.dot(jnp.transpose(A),x)
+    return lambda x: f(A(g(x)))
+
+
+def updates(init_state,breg_min,breg_max, eta_min, eta_max, mixed_hessian, J_min, J_max):
+    linear_opt_min = 1/eta_min * breg_min.D2P(init_state) - eta_max * compose_matrix_func(mixed_hessian,breg_max.D2P_inv(init_state))
+    linear_opt_max = 1/eta_max * breg_max.D2P(init_state) - eta_min * compose_matrix_func(jnp.transpose(mixed_hessian),breg_min.D2P_inv(init_state))
+
+    vec_min = J_min + eta_max * jnp.dot(mixed_hessian, breg_max.D2P_inv(J_max))
+    vec_max = J_max - eta_min * jnp.dot(jnp.transpose(mixed_hessian), breg_min.D2P_inv(J_min))
+
+    update_min,status_min = linalg.cg(linear_opt_min,vec_min,max_iter=1000,tol=1e-8)
+    update_max,status_max =  linalg.cg(linear_opt_max,vec_max,max_iter=1000,tol=1e-8)
+    return update_min, update_max
+
+
+
+
+
+def cmd_step(init_state, lagrangian,breg_min,breg_max, eta_min = 1e-4, eta_max = 1e-4):
+    """Take in an objective function that is likely the Lagrangian of an optimization problem with
+        Bregman potential on both min and max player and return a 1-step CMD update.
+
+    Args:
+        lagrangian (callable): multivariate callable with signature `L(params_min, params_max, multipliers_eq_min, multipliers_eq_max,
+                   multipliers_ineq_min, multipliers_ineq_max, *args, **kwargs)`
+        breg_min (Named tuples of callable): Tuple of unary callables with signature
+                                            'BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P","D2P_inv"])'
+                                            where DP and DP_inv are unary callables with signatures
+                                            `DP(x,*args, **kwargs)`,'DP_inv(x,*arg,**kwarg)' and
+                                            D2P, D2P_inv are function of functions
+                                            (Given an x, returning linear transformation function
+                                            that can take in another vector to output hessian-vector product).
+        breg_max (Named tuples of callable): Tuple of unary callables
+        eta_min (scalar): User specified step size for min player. Default 1e-4.
+        eta_max (scalar): User specified step size for max player. Default 1e-4.
+
+    Returns:
+        Named tuple: the states of the players at current iteration - CMDState
+    """
+
+
+
+    minP_prev = init_state.minP
+    maxP_prev = init_state.maxP
+
+    return CMDState(iter_num, minP,maxP,del_min,del_max)
