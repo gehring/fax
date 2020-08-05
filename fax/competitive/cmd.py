@@ -92,30 +92,80 @@ def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints,
 
 
 
-CMDState = collections.namedtuple("CMDState", "iter minP maxP del_x del_y")
-
-def compose_matrix_func(A,fun):
-    f = lambda x: jnp.dot(A,x)
-    g = lambda x: jnp.dot(jnp.transpose(A),x)
-    return lambda x: f(A(g(x)))
+CMDState = collections.namedtuple("CMDState", "minPlayer maxPlayer minPlayer_dual maxPlayer_dual")
+UpdateState = collections.namedtuple("UpdateState","del_min del_max")
 
 
-def updates(init_state,breg_min,breg_max, eta_min, eta_max, mixed_hessian, J_min, J_max):
-    linear_opt_min = 1/eta_min * breg_min.D2P(init_state) - eta_max * compose_matrix_func(mixed_hessian,breg_max.D2P_inv(init_state))
-    linear_opt_max = 1/eta_max * breg_max.D2P(init_state) - eta_min * compose_matrix_func(jnp.transpose(mixed_hessian),breg_min.D2P_inv(init_state))
 
-    vec_min = J_min + eta_max * jnp.dot(mixed_hessian, breg_max.D2P_inv(J_max))
-    vec_max = J_max - eta_min * jnp.dot(jnp.transpose(mixed_hessian), breg_min.D2P_inv(J_min))
+
+
+def updates(prev_state,breg_min,breg_max, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max):
+    """Given current position (prev_state), compute the updates (del_x,del_y) to the players in CMD algorithm for next position.
+
+    Args:
+        prev_state (Named tuples of vectors): The current position of the players given by tuple
+                                             with signature 'CMDState(minPlayer maxPlayer minPlayer_dual maxPlayer_dual)'
+        breg_min (Named tuples of callable): Tuple of unary callables with signature
+                                            'BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P","D2P_inv"])'
+                                            where DP and DP_inv are unary callables with signatures
+                                            `DP(x,*args, **kwargs)`,'DP_inv(x,*arg,**kwarg)' and
+                                            D2P, D2P_inv are function of functions
+                                            (Given an x, returning linear transformation function
+                                            that can take in another vector to output hessian-vector product).
+        breg_max (Named tuples of callable): Tuple of unary callables as 'breg_min'.
+        eta_min (scalar): User specified step size for min player. Default 1e-4.
+        eta_max (scalar): User specified step size for max player. Default 1e-4.
+        hessian_xy (callable): The (estimated) mixed hessian of the current positions of the players, represented in a matrix-vector operator from jax.jvp
+        hessian_xy (callable): The (estimated) mixed hessian of the current positions of the players, represented in a matrix-vector operator from jax.jvp
+        J_min (vector): The (estimated) gradient of the cost function w.r.t. the max player parameters at current position.
+        J_max(vector): The (estimated) gradient of the cost function w.r.t. the max player parameters at current position.
+    Returns:
+        UpdateState(del_min, del_max), a named tuple for the updates
+    """
+
+    def temp_min(eta_min):
+        return lambda x: 1/eta_min * breg_min.D2P(prev_state)(x)
+    def temp_max(eta_max):
+        return lambda x: 1/eta_max * breg_max.D2P(prev_state)(x)
+
+    linear_opt_min = lambda v: temp_min(eta_min)(v) + eta_max * hessian_xy(breg_max.D2P_inv(prev_state)(hessian_yx(v)))
+    linear_opt_max = lambda v: temp_max(eta_max)(v) + eta_min * hessian_yx(breg_min.D2P_inv(prev_state)(hessian_xy(v)))
+
+    vec_min = J_min + eta_max * hessian_xy(breg_max.D2P_inv(J_max))
+    vec_max = J_max - eta_min * hessian_yx(breg_min.D2P_inv(J_min))
 
     update_min,status_min = linalg.cg(linear_opt_min,vec_min,max_iter=1000,tol=1e-8)
     update_max,status_max =  linalg.cg(linear_opt_max,vec_max,max_iter=1000,tol=1e-8)
-    return update_min, update_max
+    return UpdateState(update_min, update_max)
 
 
+def cmd_step(prev_state,updates, breg_min,breg_max):
+    """Take in the previous player positions and update to the next player position. Return a 1-step CMD update.
 
+    Args:
+        prev_state (Named tuples of vectors): The current position of the players given by tuple
+                                             with signature 'CMDState(minPlayer maxPlayer minPlayer_dual maxPlayer_dual)'
+        updates (Named tuples of vectors): The updates del_x,del_y computed from updates(...) with signature 'UpdateState(del_min, del_max)'
+        breg_min (Named tuples of callable): Tuple of unary callables with signature
+                                            'BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P","D2P_inv"])'
+                                            where DP and DP_inv are unary callables with signatures
+                                            `DP(x,*args, **kwargs)`,'DP_inv(x,*arg,**kwarg)' and
+                                            D2P, D2P_inv are function of functions
+                                            (Given an x, returning linear transformation function
+                                            that can take in another vector to output hessian-vector product).
+        breg_max (Named tuples of callable): Tuple of unary callables as 'breg_min'.
 
+    Returns:
+        Named tuple: the states of the players at current iteration - CMDState
+    """
+    dual_min = breg_min.DP(prev_state.minP) - updates.del_min
+    dual_max = breg_max.DP(prev_state.maxP) + updates.del_max
 
-def cmd_step(init_state, lagrangian,breg_min,breg_max, eta_min = 1e-4, eta_max = 1e-4):
+    minP = breg_min.DP_inv(dual_min)
+    maxP = breg_max.DP_inv(dual_max)
+
+    return CMDState(minP, maxP,dual_min,dual_max)
+
     """Take in an objective function that is likely the Lagrangian of an optimization problem with
         Bregman potential on both min and max player and return a 1-step CMD update.
 
@@ -136,10 +186,3 @@ def cmd_step(init_state, lagrangian,breg_min,breg_max, eta_min = 1e-4, eta_max =
     Returns:
         Named tuple: the states of the players at current iteration - CMDState
     """
-
-
-
-    minP_prev = init_state.minP
-    maxP_prev = init_state.maxP
-
-    return CMDState(iter_num, minP,maxP,del_min,del_max)
