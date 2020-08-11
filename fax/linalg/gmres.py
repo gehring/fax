@@ -14,7 +14,6 @@ _dot = functools.partial(
 )
 _add = functools.partial(jax.tree_multimap, jnp.add)
 _sub = functools.partial(jax.tree_multimap, jnp.subtract)
-_add_dim = functools.partial(jax.tree_map, lambda x: x[..., jnp.newaxis])
 
 
 def _vdot_tree(x, y):
@@ -113,14 +112,17 @@ def _gmres_solve(A, b, x0, *, tol, atol, restart, maxiter, M):
     else:
         x = x0
 
-    iters_left = maxiter % restart
+    k = maxiter % restart
     sqr_error = _vdot_tree(residual, residual)
-    x_final = jax.lax.cond(
-        (iters_left == 0) & (sqr_error > atol2),
-        true_fun=lambda values: _gmres(A, b, values[0], restart, M, values[1]),
-        false_fun=lambda values: values[0],
-        operand=(x, residual),
-    )
+    if k > 0:
+        x_final = jax.lax.cond(
+            sqr_error > atol2,
+            true_fun=lambda values: _gmres(A, b, values[0], k, M, values[1]),
+            false_fun=lambda values: values[0],
+            operand=(x, residual),
+        )
+    else:
+        x_final = x
     return x_final
 
 
