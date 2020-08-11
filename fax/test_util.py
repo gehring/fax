@@ -1,3 +1,5 @@
+from functools import partial
+import operator
 from typing import Callable
 
 import hypothesis.extra.numpy
@@ -8,6 +10,9 @@ import jax.scipy
 import jax.test_util
 import numpy as onp
 from numpy import testing
+
+_add = partial(jax.tree_multimap, operator.add)
+_matmul = partial(jax.tree_multimap, operator.matmul)
 
 
 def generate_stable_matrix(size, eps=1e-2):
@@ -43,7 +48,7 @@ def ax_plus_b(xvec, amat, bvec):
     Returns:
         A vector equal to the matrix-vector product `amat` x `xvec` plus `bvec`.
     """
-    return np.tensordot(amat, xvec, 1) + bvec
+    return _add(_matmul(amat, xvec), bvec)
 
 
 def solve_ax_b(amat, bvec):
@@ -160,6 +165,23 @@ class FixedPointTestCase(jax.test_util.JaxTestCase):
                                 rtol=1e-5, atol=1e-5)
         testing.assert_allclose(grad_offset, true_grad_offset,
                                 rtol=1e-5, atol=1e-5)
+
+    def testPytree(self):
+        mat_size = 10
+        matrix = generate_stable_matrix(mat_size, 1e-1)
+        offset = onp.random.rand(mat_size)
+
+        matrix = make_stable(matrix, eps=1e-1)
+        matrix_pytree = (matrix, {"a": matrix, "b": [matrix, matrix]})
+        offset_pytree = (offset, {"a": offset, "b": [offset, offset]})
+        x0 = jax.tree_map(np.zeros_like, offset_pytree)
+
+        solver = self.make_solver(param_ax_plus_b)
+
+        f = lambda *args: solver(*args)
+        f_vjp = lambda *args: jax.vjp(f, *args)
+        jax.test_util.check_vjp(f, f_vjp, (x0, (matrix_pytree, offset_pytree)),
+                                rtol=1e-4, atol=1e-4)
 
 
 def constrained_opt_problem(n) -> (Callable, Callable, np.array, float):

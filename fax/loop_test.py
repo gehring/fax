@@ -349,9 +349,10 @@ def _fixedpoint_iteration_solver(unroll,
                                  default_batched_iter_size=1):
 
         def fixed_point_iteration_solver(init_x, params):
+            dtype = converge.tree_smallest_float_dtype(init_x)
             rtol, atol = converge.adjust_tol_for_dtype(default_rtol,
                                                        default_atol,
-                                                       init_x.dtype)
+                                                       dtype)
 
             def convergence_test(x_new, x_old):
                 return converge.max_diff_test(x_new, x_old, rtol, atol)

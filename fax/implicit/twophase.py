@@ -1,5 +1,6 @@
 import functools
 import logging
+import operator
 
 import jax
 import jax.numpy as np
@@ -8,6 +9,8 @@ from fax import converge
 from fax import loop
 
 logger = logging.getLogger(__name__)
+
+_add = functools.partial(jax.tree_multimap, operator.add)
 
 
 def default_convergence_test(rtol=1e-10, atol=1e-10, dtype=np.float32):
@@ -138,7 +141,7 @@ def two_phase_rev(param_func, solvers, res, sol_bar):
         _, fp_vjp_fn = jax.vjp(lambda x: param_func(p)(x), v)
 
         def dfp_fn(dout):
-            dout = fp_vjp_fn(dout)[0] + dvalue
+            dout = _add(fp_vjp_fn(dout)[0], dvalue)
             return dout
 
         return dfp_fn
