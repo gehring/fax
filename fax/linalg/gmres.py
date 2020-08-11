@@ -23,7 +23,7 @@ def _vdot_tree(x, y):
 
 def _normalize(x, return_norm=False):
     norm = jnp.sqrt(_vdot_tree(x, x))
-    normalized_x = jax.tree_map(lambda v: v/norm, x)
+    normalized_x = jax.tree_map(lambda v: v / norm, x)
     if return_norm:
         return normalized_x, norm
     else:
@@ -53,7 +53,7 @@ def arnoldi_iteration(A, b, n, M=None):
         M = _identity
     q = _normalize(b)
     Q = jax.tree_map(lambda x: jnp.pad(x[:, None], ((0, 0), (0, n))), q)
-    H = jnp.zeros((n, n+1))
+    H = jnp.zeros((n, n + 1))
 
     def step(carry, k):
         Q, H = carry
@@ -61,8 +61,8 @@ def arnoldi_iteration(A, b, n, M=None):
         v = A(M(q))
         v, h = _iterative_classical_gram_schmidt(Q, v, iterations=1)
         v, v_norm = _normalize(v, return_norm=True)
-        Q = jax.tree_multimap(lambda X, y: X.at[:, k+1].set(y), Q, v)
-        h = h.at[k+1].set(v_norm)
+        Q = jax.tree_multimap(lambda X, y: X.at[:, k + 1].set(y), Q, v)
+        h = h.at[k + 1].set(v_norm)
         H = H.at[k, :].set(h)
         return (Q, H), None
 
