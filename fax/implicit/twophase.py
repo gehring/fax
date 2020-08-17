@@ -1,5 +1,6 @@
 import functools
 import logging
+import operator
 
 import jax
 import jax.numpy as np
@@ -9,14 +10,39 @@ from fax import loop
 
 logger = logging.getLogger(__name__)
 
+_add = functools.partial(jax.tree_multimap, operator.add)
 
-def default_solver(rtol=1e-10, atol=1e-10, max_iter=5000, batched_iter_size=1):
-    """ Create a simple fixed-point iteration solver.
+
+def default_convergence_test(rtol=1e-10, atol=1e-10, dtype=np.float32):
+    """ Create a simple convergence test with tolerances adjusted for dtype.
 
     Args:
         rtol (float, optional): The relative tolerance for convergence.
         atol (float, optional): The absolute tolerance for convergence.
-        max_iter (int or None): The maximum number of iterations.
+        dtype (optional): The dtype used to adjust the required tolerance such
+            that it is within what is achievable with `dtype`.
+
+    Returns:
+        A callable taking in the output of the current and last iteration and
+        returns a boolean value indicating whether convergence is achieved.
+    """
+    adjusted_tol = converge.adjust_tol_for_dtype(rtol, atol, dtype)
+
+    def convergence_test(x_new, x_old):
+        return converge.max_diff_test(x_new, x_old, *adjusted_tol)
+
+    return convergence_test
+
+
+def default_solver(convergence_test=None, max_iter=5000, batched_iter_size=1):
+    """ Create a simple fixed-point iteration solver.
+
+    Args:
+        convergence_test (callable, optional): A callable taking in the output
+            of the current and last iteration and returns a boolean value
+            indicating whether convergence is achieved. Default convergence
+            test is to check if the max difference is within some tolerance.
+        max_iter (int or None, optional): The maximum number of iterations.
         batched_iter_size (int, optional): The number of iterations to be
             unrolled and executed per iterations of `while_loop` op. See
             `fax.loop.fixed_point_iteration` for details.
@@ -29,17 +55,18 @@ def default_solver(rtol=1e-10, atol=1e-10, max_iter=5000, batched_iter_size=1):
     """
 
     def _default_solve(param_func, init_x, params):
-        dtype = converge.tree_smallest_float_dtype(init_x)
-        adjusted_tol = converge.adjust_tol_for_dtype(rtol, atol, dtype)
 
-        def convergence_test(x_new, x_old):
-            return converge.max_diff_test(x_new, x_old, *adjusted_tol)
+        _convergence_test = convergence_test
+        if convergence_test is None:
+            _convergence_test = default_convergence_test(
+                dtype=converge.tree_smallest_float_dtype(init_x),
+            )
 
         func = param_func(params)
         sol = loop.fixed_point_iteration(
             init_x=init_x,
             func=func,
-            convergence_test=convergence_test,
+            convergence_test=_convergence_test,
             max_iter=max_iter,
             batched_iter_size=batched_iter_size,
         )
@@ -114,7 +141,7 @@ def two_phase_rev(param_func, solvers, res, sol_bar):
         _, fp_vjp_fn = jax.vjp(lambda x: param_func(p)(x), v)
 
         def dfp_fn(dout):
-            dout = fp_vjp_fn(dout)[0] + dvalue
+            dout = _add(fp_vjp_fn(dout)[0], dvalue)
             return dout
 
         return dfp_fn
