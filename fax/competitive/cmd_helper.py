@@ -3,6 +3,7 @@ import jax.numpy as np
 from jax import grad, jvp
 from jax.scipy import linalg
 # from jax import random
+# from functools import partial
 
 
 # DP helper functions
@@ -72,9 +73,11 @@ def hvp(f, primals, tangents):
 def D2P_pd(v):
     m = len(np.shape(v))
     if m == 1:
-        out = lambda u: hvp(vector_DP_pd, (v,), (u,))
+        def out(u):
+            return hvp(vector_DP_pd, (v,), (u,))
     else:
-        out = lambda u: hvp(matrix_DP_pd, (v,), (u,))
+        def out(u):
+            return hvp(matrix_DP_pd, (v,), (u,))
     return out
 
 
@@ -83,14 +86,16 @@ def D2P_pd(v):
 def inv_D2P_pd(v):
     m = len(np.shape(v))
     if m == 1:
-        out = lambda x: np.dot(np.diag(v), x)
+        def out(u):
+            return np.dot(np.diag(v), u)
     else:
-        out = lambda x: np.dot(np.linalg.matrix_power(v, 2).T, x)
+        def out(u):
+            return np.dot(np.linalg.matrix_power(v, 2).T, u)
     return out
 
 
 # Testing #
-
+#
 # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
 # DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd, v)
 #
@@ -105,8 +110,8 @@ def inv_D2P_pd(v):
 # inv_D2P_eq_min = lambda v: jax.tree_map(id_func, v)
 # inv_D2P_ineq_min = lambda v: jax.tree_map(inv_D2P_pd, v)
 # min_augmented_D2P_inv = [inv_D2P_eq_min, inv_D2P_ineq_min]
-
-
+#
+#
 # key1 = random.PRNGKey(0)
 # key = random.PRNGKey(1)
 # x1 = np.array([1., 2., 3.,4., 5.])
@@ -116,8 +121,9 @@ def inv_D2P_pd(v):
 #
 # x = [(x1,x2), (x1,x1,x2)]
 # W = [(W1,W2), (W1,W1,W2)]
-
-# print(jax.tree_multimap(lambda f, x: f(x), min_augmented_D2P_inv, x))
+#
+# print(jax.tree_multimap(lambda f, x: f(x), min_augmented_DP_inv, x))
+# print(_tree_apply(min_augmented_DP_inv, x))
 
 
 # Check if the inv(D2P) match the closed form.
