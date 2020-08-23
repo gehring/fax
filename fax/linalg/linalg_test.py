@@ -36,3 +36,18 @@ def test_linear_solve(solver, A, b):
     hypothesis.assume(np.linalg.det(A) > 1e-3)
     jax.test_util.check_close(solver(A, b), np.linalg.solve(A, b),
                               rtol=1e-5, atol=1e-5)
+
+
+def test_pytree_input(solver):
+    factor = 2.0
+
+    def linear_op(xs):
+        return jax.tree_map(lambda x: x*factor, xs)
+
+    bvec = jax.tree_map(lambda x: jnp.array(x), (0.3, [1., 2., {"foo": 4.}]))
+    xsol = solver(linear_op, bvec)[0]
+    jax.tree_multimap(
+        lambda x, b: np.testing.assert_allclose(b/factor, x, rtol=1e-5),
+        xsol,
+        bvec,
+    )

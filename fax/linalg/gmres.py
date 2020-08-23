@@ -2,11 +2,13 @@
 Implementation of GMRES
 """
 import functools
+import operator
 
 from jax import lax
 import jax.numpy as jnp
 import jax.ops
 import jax.scipy as jsp
+import jax.tree_util
 
 _dot = functools.partial(
     jax.tree_multimap,
@@ -18,6 +20,15 @@ _sub = functools.partial(jax.tree_multimap, jnp.subtract)
 
 def _vdot_tree(x, y):
     return sum(jax.tree_leaves(jax.tree_multimap(jnp.vdot, x, y)))
+
+
+def _project_on_columns(A, v):
+    v_proj = jax.tree_multimap(
+        lambda X, y: jnp.tensordot(X.T.conj(), y, axes=X.ndim - 1),
+        A,
+        v,
+    )
+    return jax.tree_util.tree_reduce(operator.add, v_proj)
 
 
 def _normalize(x, return_norm=False):
@@ -37,11 +48,15 @@ def _iterative_classical_gram_schmidt(Q, x, iterations=2):
     """Orthogonalize x against the columns of Q."""
     # "twice is enough"
     # http://slepc.upv.es/documentation/reports/str1.pdf
+
+    # This assumes that Q's leaves all have the same dimension in the last
+    # axis.
+    r = jnp.zeros((jax.tree_leaves(Q)[0].shape[-1]))
     q = x
-    r = jax.tree_map(lambda X: jnp.zeros(X.shape[1]), Q)
+
     for _ in range(iterations):
-        h = _dot(jax.tree_map(lambda X: X.T.conj(), Q), q)
-        q = _sub(q, _dot(Q, h))
+        h = _project_on_columns(Q, q)
+        q = _sub(q, jax.tree_map(lambda X: jnp.dot(X, h), Q))
         r = _add(r, h)
     return q, r
 
@@ -51,16 +66,19 @@ def arnoldi_iteration(A, b, n, M=None):
     if M is None:
         M = _identity
     q = _normalize(b)
-    Q = jax.tree_map(lambda x: jnp.pad(x[:, None], ((0, 0), (0, n))), q)
+    Q = jax.tree_map(
+        lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n),)),
+        q,
+    )
     H = jnp.zeros((n, n + 1))
 
     def step(carry, k):
         Q, H = carry
-        q = jax.tree_map(lambda x: x[:, k], Q)
+        q = jax.tree_map(lambda x: x[..., k], Q)
         v = A(M(q))
         v, h = _iterative_classical_gram_schmidt(Q, v, iterations=1)
         v, v_norm = _normalize(v, return_norm=True)
-        Q = jax.tree_multimap(lambda X, y: X.at[:, k + 1].set(y), Q, v)
+        Q = jax.tree_multimap(lambda X, y: X.at[..., k + 1].set(y), Q, v)
         h = h.at[k + 1].set(v_norm)
         H = H.at[k, :].set(h)
         return (Q, H), None
@@ -84,7 +102,7 @@ def _gmres(A, b, x0, n, M, residual=None):
     e1 = jnp.concatenate([jnp.ones((1,)), jnp.zeros((n,))])
     y = lstsq(H.T, beta * e1)
 
-    dx = M(jax.tree_map(lambda X: jnp.dot(X[:, :-1], y), Q))
+    dx = M(jax.tree_map(lambda X: jnp.dot(X[..., :-1], y), Q))
     x = _add(x0, dx)
     return x
 
@@ -133,9 +151,11 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     if M is None:
         M = _identity
 
+    size = sum(bi.size for bi in jax.tree_leaves(b))
     if maxiter is None:
-        size = sum(bi.size for bi in jax.tree_leaves(b))
         maxiter = 10 * size  # copied from scipy
+    if restart > size:
+        restart = size
 
     if jax.tree_structure(x0) != jax.tree_structure(b):
         raise ValueError(
