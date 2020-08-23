@@ -70,7 +70,7 @@ def arnoldi_iteration(A, b, n, M=None):
         lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n),)),
         q,
     )
-    H = jnp.zeros((n, n + 1))
+    H = jnp.zeros((n, n + 1), jnp.result_type(*jax.tree_leaves(b)))
 
     def step(carry, k):
         Q, H = carry
@@ -99,7 +99,7 @@ def _gmres(A, b, x0, n, M, residual=None):
     if residual is None:
         residual = _sub(b, A(x0))
     beta = jnp.sqrt(_vdot_tree(residual, residual))
-    e1 = jnp.concatenate([jnp.ones((1,)), jnp.zeros((n,))])
+    e1 = jnp.concatenate([jnp.ones((1,), beta.dtype), jnp.zeros((n,), beta.dtype)])
     y = lstsq(H.T, beta * e1)
 
     dx = M(jax.tree_map(lambda X: jnp.dot(X[..., :-1], y), Q))
