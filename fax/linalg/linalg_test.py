@@ -15,7 +15,7 @@ config.update("jax_enable_x64", True)
 
 
 @pytest.fixture(scope="module", params=[linalg.gmres])
-def solver(request):
+def dense_solver(request):
     linear_solver = request.param
 
     @jax.jit
@@ -32,22 +32,25 @@ def solver(request):
         unique=True),
     hypothesis.extra.numpy.arrays(
         np.float_, 20, elements=hypothesis.strategies.floats(1e-2, 1)))
-def test_linear_solve(solver, A, b):
+def test_linear_solve(dense_solver, A, b):
     hypothesis.assume(np.linalg.det(A) > 1e-3)
-    jax.test_util.check_close(solver(A, b), np.linalg.solve(A, b),
+    jax.test_util.check_close(dense_solver(A, b), np.linalg.solve(A, b),
                               rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.parametrize("solver", [linalg.gmres])
 def test_pytree_input(solver):
     factor = 2.0
 
     def linear_op(xs):
         return jax.tree_map(lambda x: x*factor, xs)
 
-    bvec = jax.tree_map(lambda x: jnp.array(x), (0.3, [1., 2., {"foo": 4.}]))
+    bvec = (0.3 * np.ones((2, 3)), [1., 2., {"foo": 4.}])
+    bvec = jax.tree_map(lambda x: jnp.array(x), bvec)
+
     xsol = solver(linear_op, bvec)[0]
     jax.tree_multimap(
-        lambda x, b: np.testing.assert_allclose(b/factor, x, rtol=1e-5),
-        xsol,
+        lambda b, x: np.testing.assert_allclose(b/factor, x, rtol=1e-5),
         bvec,
+        xsol,
     )

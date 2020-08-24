@@ -7,33 +7,32 @@ import operator
 from jax import lax
 import jax.numpy as jnp
 import jax.ops
-import jax.scipy as jsp
 import jax.tree_util
 
-_dot = functools.partial(
-    jax.tree_multimap,
-    functools.partial(jnp.dot, precision=lax.Precision.HIGHEST),
-)
+from .norm import tree_l2_squared
+
 _add = functools.partial(jax.tree_multimap, jnp.add)
 _sub = functools.partial(jax.tree_multimap, jnp.subtract)
 
 
-def _vdot_tree(x, y):
-    return sum(jax.tree_leaves(jax.tree_multimap(jnp.vdot, x, y)))
-
-
 def _project_on_columns(A, v):
     v_proj = jax.tree_multimap(
-        lambda X, y: jnp.tensordot(X.T.conj(), y, axes=X.ndim - 1),
+        lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
         A,
         v,
     )
     return jax.tree_util.tree_reduce(operator.add, v_proj)
 
 
-def _normalize(x, return_norm=False):
-    norm = jnp.sqrt(_vdot_tree(x, x))
-    normalized_x = jax.tree_map(lambda v: v / norm, x)
+def _safe_normalize(x, return_norm=False):
+    norm = jnp.sqrt(tree_l2_squared(x))
+
+    normalized_x, norm = jax.lax.cond(
+        norm > 1e-12,
+        lambda y: (jax.tree_map(lambda v: v / norm, y), norm),
+        lambda y: (y, 0.),
+        x,
+    )
     if return_norm:
         return normalized_x, norm
     else:
@@ -65,7 +64,7 @@ def arnoldi_iteration(A, b, n, M=None):
     # https://en.wikipedia.org/wiki/Arnoldi_iteration#The_Arnoldi_iteration
     if M is None:
         M = _identity
-    q = _normalize(b)
+    q = _safe_normalize(b)
     Q = jax.tree_map(
         lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n),)),
         q,
@@ -76,8 +75,8 @@ def arnoldi_iteration(A, b, n, M=None):
         Q, H = carry
         q = jax.tree_map(lambda x: x[..., k], Q)
         v = A(M(q))
-        v, h = _iterative_classical_gram_schmidt(Q, v, iterations=1)
-        v, v_norm = _normalize(v, return_norm=True)
+        v, h = _iterative_classical_gram_schmidt(Q, v, iterations=2)
+        v, v_norm = _safe_normalize(v, return_norm=True)
         Q = jax.tree_multimap(lambda X, y: X.at[..., k + 1].set(y), Q, v)
         h = h.at[k + 1].set(v_norm)
         H = H.at[k, :].set(h)
@@ -90,7 +89,7 @@ def arnoldi_iteration(A, b, n, M=None):
 @jax.jit
 def lstsq(a, b):
     # slightly faster than jnp.linalg.lstsq
-    return jsp.linalg.solve(_dot(a.T, a), _dot(a.T, b), sym_pos=True)
+    return jnp.linalg.lstsq(a, b)[0]
 
 
 def _gmres(A, b, x0, n, M, residual=None):
@@ -98,8 +97,9 @@ def _gmres(A, b, x0, n, M, residual=None):
     Q, H = arnoldi_iteration(A, b, n, M)
     if residual is None:
         residual = _sub(b, A(x0))
-    beta = jnp.sqrt(_vdot_tree(residual, residual))
-    e1 = jnp.concatenate([jnp.ones((1,), beta.dtype), jnp.zeros((n,), beta.dtype)])
+    beta = jnp.sqrt(tree_l2_squared(residual))
+    e1 = jnp.concatenate(
+        [jnp.ones((1,), beta.dtype), jnp.zeros((n,), beta.dtype)])
     y = lstsq(H.T, beta * e1)
 
     dx = M(jax.tree_map(lambda X: jnp.dot(X[..., :-1], y), Q))
@@ -108,14 +108,14 @@ def _gmres(A, b, x0, n, M, residual=None):
 
 
 def _gmres_solve(A, b, x0, *, tol, atol, restart, maxiter, M):
-    bs = _vdot_tree(b, b)
+    bs = tree_l2_squared(b)
     atol2 = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
     num_restarts = maxiter // restart
 
     def cond_fun(value):
         x, residual, k = value
-        sqr_error = _vdot_tree(residual, residual)
-        return (sqr_error > atol2) & (k < num_restarts)
+        sqr_error = tree_l2_squared(residual)
+        return (sqr_error > atol2) & (k < num_restarts) & ~jnp.isnan(sqr_error)
 
     def body_fun(value):
         x, residual, k = value
@@ -131,7 +131,7 @@ def _gmres_solve(A, b, x0, *, tol, atol, restart, maxiter, M):
         x = x0
 
     k = maxiter % restart
-    sqr_error = _vdot_tree(residual, residual)
+    sqr_error = tree_l2_squared(residual)
     if k > 0:
         x_final = jax.lax.cond(
             sqr_error > atol2,
