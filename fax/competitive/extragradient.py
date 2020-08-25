@@ -1,7 +1,7 @@
 from typing import Callable
 
 import jax.experimental.optimizers
-from jax import np, tree_util
+from jax import numpy as np, tree_util
 
 import fax.competitive.sgd
 from fax.jax_utils import add
