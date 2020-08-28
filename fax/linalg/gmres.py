@@ -28,7 +28,7 @@ def _safe_normalize(x, return_norm=False):
     norm = jnp.sqrt(tree_l2_squared(x))
 
     normalized_x, norm = jax.lax.cond(
-        norm > 1e-12,
+        norm > 1e-8,
         lambda y: (jax.tree_map(lambda v: v / norm, y), norm),
         lambda y: (y, 0.),
         x,
@@ -88,7 +88,6 @@ def arnoldi_iteration(A, b, n, M=None):
 
 @jax.jit
 def lstsq(a, b):
-    # slightly faster than jnp.linalg.lstsq
     return jnp.linalg.lstsq(a, b)[0]
 
 
