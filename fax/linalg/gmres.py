@@ -28,9 +28,9 @@ def _safe_normalize(x, return_norm=False):
     norm = jnp.sqrt(tree_l2_squared(x))
 
     normalized_x, norm = jax.lax.cond(
-        norm > 1e-8,
+        norm > 1e-12,
         lambda y: (jax.tree_map(lambda v: v / norm, y), norm),
-        lambda y: (y, 0.),
+        lambda y: (jax.tree_map(jnp.zeros_like, y), 0.),
         x,
     )
     if return_norm:
@@ -88,7 +88,7 @@ def arnoldi_iteration(A, b, n, M=None):
 
 @jax.jit
 def lstsq(a, b):
-    return jnp.linalg.lstsq(a, b)[0]
+    return jnp.linalg.lstsq(a, b, rcond=1e-5)[0]
 
 
 def _gmres(A, b, x0, n, M, residual=None):
