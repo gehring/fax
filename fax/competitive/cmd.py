@@ -14,12 +14,15 @@ BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "
 # AugmentedD2Pinv = collections.namedtuple("AugmentedD2Pinv", ["D2Pinv_primal","D2Pinv_eq","D2Pinv_ineq"])
 
 
-def default_constraint(x=None):
-    return 0
+def D2P_l2(v):
+    return lambda x: x
 
 
-def make_lagrangian(obj_func, breg_min, breg_max, min_inequality_constraints=default_constraint,
-                    min_equality_constraints=default_constraint, max_inequality_constraints=default_constraint, max_equality_constraints=default_constraint):
+default_breg = BregmanPotential(lambda x: x, lambda x: x, D2P_l2, D2P_l2)
+
+
+def make_lagrangian(obj_func, breg_min=default_breg, breg_max=default_breg, min_inequality_constraints=None,
+                    min_equality_constraints=None, max_inequality_constraints=None, max_equality_constraints=None):
     """Transform the original constrained minimax problem with parametric inequalities into another minimax problem with only set constraints
 
     Args:
@@ -144,7 +147,7 @@ UpdateState = collections.namedtuple("UpdateState", "del_min del_max")
 _tree_apply = partial(jax.tree_multimap, lambda f, x: f(x))
 
 
-def updates(prev_state, breg_min, breg_max, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max):
+def updates(prev_state, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max, breg_min=default_breg, breg_max=default_breg):
     """Equation (4). Given current position (prev_state), compute the updates (del_x,del_y) to the players in CMD algorithm for next position.
 
     Args:
@@ -168,39 +171,42 @@ def updates(prev_state, breg_min, breg_max, eta_min, eta_max, hessian_xy, hessia
         UpdateState(del_min, del_max), a named tuple for the updates
     """
 
-    def linear_opt_min(v):
-        temp = _tree_apply(hessian_yx, v)
-        temp1 = _tree_apply(breg_max.inv_D2P, temp)
-        temp2 = _tree_apply(hessian_xy, temp1)
-        temp3 = tree_util.tree_map(lambda x: 1 / eta_max * x, temp2)
-        temp4 = _tree_apply(breg_min.D2P, v)
+    def linear_opt_min(min_tree):
+        temp = hessian_yx(min_tree) # returns max_tree type
+        temp1 = _tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer), temp) # returns max_tree type
+        temp2 = hessian_xy(temp1) #returns min_tree type
+        temp3 = tree_util.tree_map(lambda x: eta_max * x, temp2) # still min_tree type
+        temp4 = _tree_apply(_tree_apply(breg_min.D2P, prev_state.minPlayer), min_tree) # also returns min_tree type
         temp5 = tree_util.tree_map(lambda x: 1 / eta_min * x, temp4)
-        return tree_util.tree_map(lambda x, y: x + y, temp3, temp5)
+        return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5) # min_tree type
 
-    def linear_opt_max(v):
-        temp = _tree_apply(hessian_xy, v)
-        temp1 = _tree_apply(breg_min.inv_D2P, temp)
-        temp2 = _tree_apply(hessian_yx, temp1)
-        temp3 = tree_util.tree_map(lambda x: 1 / eta_min * x, temp2)
-        temp4 = _tree_apply(breg_max.D2P, v)
-        temp5 = tree_util.tree_map(lambda x: 1 / eta_max * x, temp4)
-        return tree_util.tree_map(lambda x, y: x + y, temp3, temp5)
+    def linear_opt_max(max_tree):
+        temp = hessian_xy(max_tree)
+        temp1 = _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), temp)
+        temp2 = hessian_yx(temp1) # returns max_tree type
+        temp3 = tree_util.tree_map(lambda x: eta_min * x, temp2) # max_tree type
+        temp4 = _tree_apply(_tree_apply(breg_max.D2P, prev_state.maxPlayer), max_tree)
+        temp5 = tree_util.tree_map(lambda x: 1 / eta_max * x, temp4) # max_tree type
+        return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5) # max_tree type
 
     # calculate the vectors in equation (4)
-    temp = _tree_apply(hessian_xy, _tree_apply(breg_max.inv_D2P, J_max))
+    temp = hessian_xy(_tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer), J_max))
     temp2 = tree_util.tree_map(lambda x: eta_max * x, temp)
-    vec_min = tree_util.tree_map(lambda x, y: x + y, J_min, temp2)
+    vec_min = tree_util.tree_multimap(lambda arr1, arr2: arr1 + arr2, J_min, temp2)
 
-    temp = _tree_apply(hessian_yx, _tree_apply(breg_min.inv_D2P, J_min))
+    # temp = _tree_apply(hessian_yx, _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), J_min))
+    temp = hessian_yx(_tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), J_min))
     temp2 = tree_util.tree_map(lambda x: eta_min * x, temp)
-    vec_max = tree_util.tree_map(lambda x, y: x + y, J_max, temp2)
+    vec_max = tree_util.tree_multimap(lambda x, y: x - y, J_max, temp2)
 
-    update_min, status_min = linalg.cg(linear_opt_min, vec_min, max_iter=1000, tol=1e-6)
-    update_max, status_max = linalg.cg(linear_opt_max, vec_max, max_iter=1000, tol=1e-6)
+    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=1000, tol=1e-6)
+    update_min = tree_util.tree_multimap(lambda x: -x, update_min)
+    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=1000, tol=1e-6)
+
     return UpdateState(update_min, update_max)
 
 
-def cmd_step(prev_state, updates, breg_min, breg_max):
+def cmd_step(prev_state, updates, breg_min=default_breg, breg_max=default_breg):
     """Equation (2). Take in the previous player positions and update to the next player position. Return a 1-step CMD update.
 
     Args:
@@ -219,11 +225,11 @@ def cmd_step(prev_state, updates, breg_min, breg_max):
     Returns:
         Named tuple: the states of the players at current iteration - CMDState
     """
-    temp_min = _tree_apply(breg_min.D2P, updates.del_min)
-    temp_max = _tree_apply(breg_max.D2P, updates.del_max)
+    temp_min = _tree_apply(_tree_apply(breg_min.D2P, prev_state.minPlayer), updates.del_min)
+    temp_max = _tree_apply(_tree_apply(breg_max.D2P, prev_state.maxPlayer), updates.del_max)
 
-    dual_min = tree_util.tree_map(lambda x, y: x + y, prev_state.minPlayer_dual, temp_min)
-    dual_max = tree_util.tree_map(lambda x, y: x + y, prev_state.maxPlayer_dual, temp_max)
+    dual_min = tree_util.tree_multimap(lambda x, y: x + y, prev_state.minPlayer_dual, temp_min)
+    dual_max = tree_util.tree_multimap(lambda x, y: x + y, prev_state.maxPlayer_dual, temp_max)
 
     minP = _tree_apply(breg_min.DP_inv, dual_min)
     maxP = _tree_apply(breg_max.DP_inv, dual_max)

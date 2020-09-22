@@ -1,9 +1,9 @@
 import jax.numpy as np
-# import jax
+import jax
 from jax import grad, jvp
 from jax.scipy import linalg
-# from jax import random
-# from functools import partial
+from jax import random
+from functools import partial
 
 
 # DP helper functions
@@ -93,7 +93,6 @@ def inv_D2P_pd(v):
             return np.dot(np.linalg.matrix_power(v, 2).T, u)
     return out
 
-
 # Testing #
 #
 # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
@@ -122,8 +121,8 @@ def inv_D2P_pd(v):
 # x = [(x1,x2), (x1,x1,x2)]
 # W = [(W1,W2), (W1,W1,W2)]
 #
-# print(jax.tree_multimap(lambda f, x: f(x), min_augmented_DP_inv, x))
-# print(_tree_apply(min_augmented_DP_inv, x))
+# print(jax.tree_multimap(lambda f, x: f(x), min_augmented_DP, W))
+# print(_tree_apply(min_augmented_DP, x))
 
 
 # Check if the inv(D2P) match the closed form.
