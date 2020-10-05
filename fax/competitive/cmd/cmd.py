@@ -28,7 +28,7 @@ def vector_DP_pd(v):
 
 
 def DP_pd(v):
-    m = len(np.shape(v))
+    m = len(jnp.shape(v))
     if m == 1:
         out = grad(lambda x: jnp.dot(x, jnp.log(x)))(v)
     else:
