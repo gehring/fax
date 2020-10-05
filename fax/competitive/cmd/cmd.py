@@ -2,7 +2,7 @@ import collections
 from fax import math
 import jax
 import jax.numpy as jnp
-from jax import tree_util
+from jax import tree_util, jacfwd, random
 from jax.scipy.sparse import linalg
 from cmd_helper import DP_pd, DP_inv_pd, inv_D2P_pd, D2P_pd, id_func
 from functools import partial
@@ -19,10 +19,11 @@ def D2P_l2(v):
 
 
 default_breg = BregmanPotential(lambda x: x, lambda x: x, D2P_l2, D2P_l2)
+def default_func(x):
+    return 0.
 
-
-def make_lagrangian(obj_func, breg_min=default_breg, breg_max=default_breg, min_inequality_constraints=None,
-                    min_equality_constraints=None, max_inequality_constraints=None, max_equality_constraints=None):
+def make_lagrangian(obj_func, breg_min=default_breg, breg_max=default_breg, min_inequality_constraints=default_func,
+                    min_equality_constraints=default_func, max_inequality_constraints=default_func, max_equality_constraints=default_func):
     """Transform the original constrained minimax problem with parametric inequalities into another minimax problem with only set constraints
 
     Args:
@@ -41,114 +42,94 @@ def make_lagrangian(obj_func, breg_min=default_breg, breg_max=default_breg, min_
         max_equality_constraints (callable): Unary callable with signature `g(y, *args, **kwargs)`
 
     Returns:
-        tuple: callables (lagrangian, breg_min_aug, breg_max_aug, init_multipliers)
+        tuple: callables (init_multipliers, lagrangian, breg_min_aug, breg_max_aug)
     """
 
-    def init_multipliers(params_min, params_max, *args, **kwargs):
+    def init_multipliers(params_min, params_max, key, *args, **kwargs):
         """Initialize multipliers for equality and inequality constraints for both players
 
         Args:
-          params_min: input to the equality and ineuqality constraints for min player, 'x'
-          params_max: input to the equality and ineuqality constraints for max player, 'y'
+          params_min: initialized input to the equality and ineuqality constraints for min player, 'x'
+          params_max: initialized input to the equality and ineuqality constraints for max player, 'y'
 
         Returns:
-            params_min (pytree): input to the equality and ineuqality constraints for min player, 'x'
-            params_max (pytree): input to the equality and ineuqality constraints for max player, 'y'
-            multipliers_eq_min (pytree): The initialized Lagrangian multiplier for the equality constraint for min player
-            multipliers_eq_max (pytree): The initialized Lagrangian multiplier for the equality constraint for max player
-            multipliers_ineq_min (pytree): The initialized Lagrangian multiplier for the inequality constraint for min player
-            multipliers_ineq_max (pytree): The initialized Lagrangian multiplier for the inequality constraint for max player
+            min_augmented (tuple): initialized min player with signature (original_min_param, multipliers_eq_max, multipliers_ineq_max)
+            max_augmented (tuple): initialized max player with signature (original_max_param, multipliers_eq_min, multipliers_ineq_min)
         """
+
         # Equality constraints' shape for both min and max player
         h_min = jax.eval_shape(min_equality_constraints, params_min, *args, **kwargs)
         h_max = jax.eval_shape(max_equality_constraints, params_max, *args, **kwargs)
         # Make multipliers for equality constraints associated with both players, ie, '\lambda_x' and '\lambda_y'
-        multipliers_eq_min = tree_util.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), h_min)
-        multipliers_eq_max = tree_util.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), h_max)
+        multipliers_eq_min = tree_util.tree_map(lambda x: random.normal(key, x.shape), h_min)
+        multipliers_eq_max = tree_util.tree_map(lambda x: random.normal(key, x.shape), h_max)
 
         # Inequality constraints' shape for both min and max player
         g_min = jax.eval_shape(min_inequality_constraints, params_min, *args, **kwargs)  # should be a tuple
         g_max = jax.eval_shape(max_inequality_constraints, params_max, *args, **kwargs)  # should be a tuple
         # Make multipliers for the constraints associated with both players, ie, '\mu_x' and '\mu_y'
-        multipliers_ineq_min = tree_util.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), g_min)
-        multipliers_ineq_max = tree_util.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), g_max)
+        multipliers_ineq_min = tree_util.tree_map(lambda x: random.normal(key, x.shape), g_min)
+        multipliers_ineq_max = tree_util.tree_map(lambda x: random.normal(key, x.shape), g_max)
 
-        return params_min, params_max, multipliers_eq_min, multipliers_eq_max, multipliers_ineq_min, multipliers_ineq_max
+        min_augmented = (params_min, multipliers_eq_max, multipliers_ineq_max)
+        max_augmented = (params_max, multipliers_eq_min, multipliers_ineq_min)
 
-    def lagrangian(params_min, params_max, multipliers_eq_min=None, multipliers_eq_max=None,
-                   multipliers_ineq_min=None, multipliers_ineq_max=None, *args, **kwargs):
-        """Generate the Lagrangian of the original optimization
+        return min_augmented, max_augmented
 
-        Args:
-            params_min: input to the equality and inequality constraints for min player, 'x'
-            params_max: input to the equality and inequality constraints for max player, 'y'
-            multipliers_eq_min: The Lagrangian multiplier for the equality constraint for min player
-            multipliers_eq_max: The Lagrangian multiplier for the equality constraint for max player
-            multipliers_ineq_min: The Lagrangian multiplier for the inequality constraint for min player
-            multipliers_ineq_max: The Lagrangian multiplier for the inequality constraint for max player
-        Returns:
-            The Lagrangian function (callable) of the original problem with some currently assigned Lagrangian multipliers.
-        """
-        h_min = min_equality_constraints(params_min, *args, **kwargs)  # This is a pytree
-        h_max = max_equality_constraints(params_max, *args, **kwargs)  # This returns a pytree
-        g_min = min_inequality_constraints(params_min, *args, **kwargs)  # This returns a pytree
-        g_max = max_inequality_constraints(params_max, *args, **kwargs)  # This returns a pytree
+    def lagrangian(minPlayer, maxPlayer):
+        return obj_func(minPlayer[0], maxPlayer[0]) +\
+               math.pytree_dot(min_equality_constraints(minPlayer[0]), maxPlayer[1]) +\
+               math.pytree_dot(max_equality_constraints(maxPlayer[0]), minPlayer[1]) +\
+               math.pytree_dot(min_inequality_constraints(minPlayer[0]), maxPlayer[2]) +\
+               math.pytree_dot(max_inequality_constraints(maxPlayer[0]), minPlayer[2])
 
-        return obj_func(params_min, params_max, *args, **kwargs) + math.pytree_dot(multipliers_eq_min, h_min) + math.pytree_dot(multipliers_eq_max, h_max) + math.pytree_dot(multipliers_ineq_min, g_min) + math.pytree_dot(multipliers_ineq_max, g_max)
 
-    def breg_min_aug():
-        """Augment the original min player's Bregman divergence structure with Lagrangian multipliers from the max player's (in)equalities.
+    # DP_eq_min = lambda x: x
+    # DP_ineq_min = lambda v: jax.tree_map(DP_pd, v)
+    min_augmented_DP = (breg_min.DP, lambda x: x, lambda v: jax.tree_map(DP_pd, v))  # [breg_min.DP, DP_eq_min, DP_ineq_min]
 
-        Returns:
-            Named tuple of augmented Bregman divergence containing functions: pytree -> pytree.
-        """
-        # DP_eq_min = lambda x: x
-        # DP_ineq_min = lambda v: jax.tree_map(DP_pd, v)
-        min_augmented_DP = [breg_min.DP, lambda x: x, lambda v: jax.tree_map(DP_pd, v)]  # [breg_min.DP, DP_eq_min, DP_ineq_min]
+    # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
+    # DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd,v)
+    min_augmented_DP_inv = (breg_min.DP_inv, lambda v: jax.tree_map(lambda x: x, v), lambda v: jax.tree_map(DP_inv_pd, v)) # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
 
-        # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
-        # DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd,v)
-        min_augmented_DP_inv = [breg_min.DP_inv, lambda v: jax.tree_map(lambda x: x, v), lambda v: jax.tree_map(DP_inv_pd, v)]  # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
+    # D2P_eq_min = lambda v: jax.tree_map(id_func, v)
+    # D2P_ineq_min = lambda v: jax.tree_map(D2P_pd,v)
+    min_augmented_D2P = (breg_min.D2P, lambda v: jax.tree_map(id_func, v), lambda v: jax.tree_map(D2P_pd, v))  # [breg_min.D2P, D2P_eq_min, D2P_ineq_min]
 
-        # D2P_eq_min = lambda v: jax.tree_map(id_func, v)
-        # D2P_ineq_min = lambda v: jax.tree_map(D2P_pd,v)
-        min_augmented_D2P = [breg_min.D2P, lambda v: jax.tree_map(id_func, v), lambda v: jax.tree_map(D2P_pd, v)]  # [breg_min.D2P, D2P_eq_min, D2P_ineq_min]
+    # inv_D2P_eq_min = lambda v: jax.tree_map(lambda x:x, v)
+    # inv_D2P_ineq_min = lambda v: jax.tree_map(inv_D2P_pd, v)
+    min_augmented_D2P_inv = (breg_min.inv_D2P, lambda v: jax.tree_map(lambda x:x, v), lambda v: jax.tree_map(inv_D2P_pd, v))  # [breg_min.inv_D2P, inv_D2P_eq_min, inv_D2P_ineq_min]
 
-        # inv_D2P_eq_min = lambda v: jax.tree_map(lambda x:x, v)
-        # inv_D2P_ineq_min = lambda v: jax.tree_map(inv_D2P_pd, v)
-        min_augmented_D2P_inv = [breg_min.inv_D2P, lambda v: jax.tree_map(lambda x:x, v), lambda v: jax.tree_map(inv_D2P_pd, v)]  # [breg_min.inv_D2P, inv_D2P_eq_min, inv_D2P_ineq_min]
+    # DP_eq_max = lambda x: x
+    # DP_ineq_max = lambda v: jax.tree_map(DP_pd, v)
+    max_augmented_DP = (breg_max.DP, lambda x: x, lambda v: jax.tree_map(DP_pd, v))  # [breg_min.DP, DP_eq_min, DP_ineq_min]
 
-        return BregmanPotential(min_augmented_DP, min_augmented_DP_inv, min_augmented_D2P, min_augmented_D2P_inv)
+    # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
+    # DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd,v)
+    max_augmented_DP_inv = (breg_max.DP_inv, lambda v: jax.tree_map(lambda x: x, v), lambda v: jax.tree_map(DP_inv_pd, v))  # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
 
-    def breg_max_aug():
-        # DP_eq_max = lambda x: x
-        # DP_ineq_max = lambda v: jax.tree_map(DP_pd, v)
-        max_augmented_DP = [breg_max.DP, lambda x: x, lambda v: jax.tree_map(DP_pd, v)]  # [breg_min.DP, DP_eq_min, DP_ineq_min]
+    # D2P_eq_max = lambda v: jax.tree_map(id_func, v)
+    # D2P_ineq_max = lambda v: jax.tree_map(D2P_pd,v)
+    max_augmented_D2P = (breg_max.D2P, lambda v: jax.tree_map(id_func, v), lambda v: jax.tree_map(D2P_pd, v))  # [breg_min.D2P, D2P_eq_min, D2P_ineq_min]
 
-        # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
-        # DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd,v)
-        max_augmented_DP_inv = [breg_max.DP_inv, lambda v: jax.tree_map(lambda x: x, v), lambda v: jax.tree_map(DP_inv_pd, v)]  # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
+    # inv_D2P_eq_max = lambda v: jax.tree_map(lambda x:x, v)
+    # inv_D2P_ineq_max = lambda v: jax.tree_map(inv_D2P_pd, v)
+    max_augmented_D2P_inv = (breg_max.inv_D2P, lambda v: jax.tree_map(lambda x:x, v), lambda v: jax.tree_map(inv_D2P_pd, v))  # [breg_max.inv_D2P, inv_D2P_eq_max, inv_D2P_ineq_max]
 
-        # D2P_eq_max = lambda v: jax.tree_map(id_func, v)
-        # D2P_ineq_max = lambda v: jax.tree_map(D2P_pd,v)
-        max_augmented_D2P = [breg_max.D2P, lambda v: jax.tree_map(id_func, v), lambda v: jax.tree_map(D2P_pd, v)]  # [breg_min.D2P, D2P_eq_min, D2P_ineq_min]
 
-        # inv_D2P_eq_max = lambda v: jax.tree_map(lambda x:x, v)
-        # inv_D2P_ineq_max = lambda v: jax.tree_map(inv_D2P_pd, v)
-        max_augmented_D2P_inv = [breg_max.inv_D2P, lambda v: jax.tree_map(lambda x:x, v), lambda v: jax.tree_map(inv_D2P_pd, v)]  # [breg_max.inv_D2P, inv_D2P_eq_max, inv_D2P_ineq_max]
-
-        return BregmanPotential(max_augmented_DP, max_augmented_DP_inv, max_augmented_D2P, max_augmented_D2P_inv)
-
-    return lagrangian, breg_min_aug, breg_max_aug, init_multipliers
+    return init_multipliers, lagrangian, BregmanPotential(min_augmented_DP, min_augmented_DP_inv, min_augmented_D2P, min_augmented_D2P_inv), BregmanPotential(max_augmented_DP, max_augmented_DP_inv, max_augmented_D2P, max_augmented_D2P_inv)
 
 
 CMDState = collections.namedtuple("CMDState", "minPlayer maxPlayer minPlayer_dual maxPlayer_dual")
 UpdateState = collections.namedtuple("UpdateState", "del_min del_max")
 _tree_apply = partial(jax.tree_multimap, lambda f, x: f(x))
 
+#TODO: bake in step size to the bregman potential definitions instead of in cmd loop
+def pd_bregman(step_size = 1e-5):
+    return BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
 
-def updates(prev_state, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max, breg_min=default_breg, breg_max=default_breg):
-    """Equation (4). Given current position (prev_state), compute the updates (del_x,del_y) to the players in CMD algorithm for next position.
+def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad_min=None, grad_max=None, breg_min=default_breg, breg_max=default_breg, objective_func=None):
+    """Equation (4). Given current position (prev_state), compute the updates (del_x,del_y) to the players in cmd algorithm for next position.
 
     Args:
         prev_state (Named tuples of vectors): The current position of the players given by tuple
@@ -165,11 +146,21 @@ def updates(prev_state, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max, 
         eta_max (scalar): User specified step size for max player. Default 1e-4.
         hessian_xy (callable): The (estimated) mixed hessian of the current positions of the players, represented in a matrix-vector operator from jax.jvp
         hessian_xy (callable): The (estimated) mixed hessian of the current positions of the players, represented in a matrix-vector operator from jax.jvp
-        J_min (vector): The (estimated) gradient of the cost function w.r.t. the max player parameters at current position.
-        J_max(vector): The (estimated) gradient of the cost function w.r.t. the max player parameters at current position.
+        grad_min (vector): The (estimated) gradient of the cost function w.r.t. the max player parameters at current position.
+        grad_max(vector): The (estimated) gradient of the cost function w.r.t. the max player parameters at current position.
     Returns:
         UpdateState(del_min, del_max), a named tuple for the updates
     """
+    if objective_func is not None:
+        grad_min = jacfwd(objective_func, 0)(prev_state.minPlayer, prev_state.maxPlayer)
+        grad_max = jacfwd(objective_func, 1)(prev_state.minPlayer, prev_state.maxPlayer)
+        H_xy = jacfwd(grad_min, 1)(prev_state.minPlayer, prev_state.maxPlayer)
+        H_yx = jacfwd(grad_max, 0)(prev_state.minPlayer, prev_state.maxPlayer)
+        # TODO: check how pytree of minplayer and maxplayer's mixed hessian work in jax
+        hessian_xy = lambda v: jnp.dot(
+            H_xy(prev_state.minPlayer, prev_state.maxPlayer), v)
+        hessian_yx = lambda v: jnp.dot(
+            H_yx(prev_state.minPlayer, prev_state.maxPlayer), v)
 
     def linear_opt_min(min_tree):
         temp = hessian_yx(min_tree) # returns max_tree type
@@ -178,6 +169,7 @@ def updates(prev_state, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max, 
         temp3 = tree_util.tree_map(lambda x: eta_max * x, temp2) # still min_tree type
         temp4 = _tree_apply(_tree_apply(breg_min.D2P, prev_state.minPlayer), min_tree) # also returns min_tree type
         temp5 = tree_util.tree_map(lambda x: 1 / eta_min * x, temp4)
+        print("linear operator being called! - min")
         return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5) # min_tree type
 
     def linear_opt_max(max_tree):
@@ -187,17 +179,18 @@ def updates(prev_state, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max, 
         temp3 = tree_util.tree_map(lambda x: eta_min * x, temp2) # max_tree type
         temp4 = _tree_apply(_tree_apply(breg_max.D2P, prev_state.maxPlayer), max_tree)
         temp5 = tree_util.tree_map(lambda x: 1 / eta_max * x, temp4) # max_tree type
+        print("linear operator being called! - max")
         return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5) # max_tree type
 
     # calculate the vectors in equation (4)
-    temp = hessian_xy(_tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer), J_max))
+    temp = hessian_xy(_tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer), grad_max))
     temp2 = tree_util.tree_map(lambda x: eta_max * x, temp)
-    vec_min = tree_util.tree_multimap(lambda arr1, arr2: arr1 + arr2, J_min, temp2)
+    vec_min = tree_util.tree_multimap(lambda arr1, arr2: arr1 + arr2, grad_min, temp2)
 
-    # temp = _tree_apply(hessian_yx, _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), J_min))
-    temp = hessian_yx(_tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), J_min))
+    # temp = _tree_apply(hessian_yx, _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), grad_min))
+    temp = hessian_yx(_tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), grad_min))
     temp2 = tree_util.tree_map(lambda x: eta_min * x, temp)
-    vec_max = tree_util.tree_multimap(lambda x, y: x - y, J_max, temp2)
+    vec_max = tree_util.tree_multimap(lambda x, y: x - y, grad_max, temp2)
 
     update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=1000, tol=1e-6)
     update_min = tree_util.tree_multimap(lambda x: -x, update_min)
@@ -207,7 +200,7 @@ def updates(prev_state, eta_min, eta_max, hessian_xy, hessian_yx, J_min, J_max, 
 
 
 def cmd_step(prev_state, updates, breg_min=default_breg, breg_max=default_breg):
-    """Equation (2). Take in the previous player positions and update to the next player position. Return a 1-step CMD update.
+    """Equation (2). Take in the previous player positions and update to the next player position. Return a 1-step cmd update.
 
     Args:
         prev_state (Named tuples of vectors): The current position of the players given by tuple

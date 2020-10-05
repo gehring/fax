@@ -2,7 +2,7 @@ import jax.numpy as np
 from jax import random, grad, jacfwd
 # from jax.scipy import linalg
 from cmd_helper import DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd
-from cmd import make_lagrangian, updates, cmd_step
+from cmd import make_lagrangian, updates, cmd_step, pd_bregman
 import collections
 from lq_game_helper import proj, gradient, Df_lambda, Df_L, Df_lambda_L, Df_L_lambda
 import jax.ops
@@ -23,13 +23,13 @@ x = [(x1, x2), (x1, x1, x2)]
 W = [(W1, W2), (W1, W1, W2)]
 
 
-# CMD main algorithm test with single variables, scalar example from CMD paper
+# cmd main algorithm test with single variables, scalar example from cmd paper
 """
 def obj_func(x, y):
     return 2 * x * y - (1 - y) ** 2
 
-breg_min = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
-breg_max = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
+breg_min = pd_bregman()
+breg_max = pd_bregman()
 # initialize states
 x_init = -random.normal(key1, (1, ))
 y_init = -random.normal(key, (1, ))
@@ -43,21 +43,21 @@ grad_max = jacfwd(obj_func,1)
 H_xy = jacfwd(grad_min,1)
 H_yx =jacfwd(grad_max,0)
 
-J_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
-J_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+grad_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+grad_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
 hessian_xy = lambda v: H_xy(prev_state.minPlayer, prev_state.maxPlayer).flatten()*v
 hessian_yx = lambda v: H_yx(prev_state.minPlayer, prev_state.maxPlayer).flatten()*v
 
-# Main CMD algorithm
+# Main cmd algorithm
 for t in range(1000):
-    delta = updates(prev_state, 0.001, 0.001, hessian_xy, hessian_yx, J_min, J_max, breg_min, breg_max)
+    delta = updates(prev_state, 0.001, 0.001, hessian_xy, hessian_yx, grad_min, grad_max, breg_min, breg_max)
     print(prev_state)
     new_state = cmd_step(prev_state, delta, breg_min, breg_max)
     print(new_state)
     prev_state = new_state
 
-    J_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
-    J_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+    grad_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+    grad_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
     hessian_xy = lambda v: H_xy(prev_state.minPlayer, prev_state.maxPlayer).flatten() * v
     hessian_yx = lambda v: H_yx(prev_state.minPlayer, prev_state.maxPlayer).flatten() * v
 
@@ -66,7 +66,7 @@ print(new_state)
 """
 
 
-# CMD main algorithm test with single variables, vector example from CMD paper
+# cmd main algorithm test with single variables, vector example from cmd paper
 """
 n = 3
 A = random.normal(key, (n, n))
@@ -91,21 +91,21 @@ grad_max = jacfwd(obj_func,1)
 H_xy = jacfwd(grad_min,1)
 H_yx =jacfwd(grad_max,0)
 
-J_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).reshape(n,)
-J_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).reshape(1,)
+grad_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).reshape(n,)
+grad_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).reshape(1,)
 hessian_xy = lambda v: np.dot(H_xy(prev_state.minPlayer, prev_state.maxPlayer).reshape(n,1), v)
 hessian_yx = lambda v: np.dot(H_yx(prev_state.minPlayer, prev_state.maxPlayer).reshape(1,n), v)
 
-# Main CMD algorithm
+# Main cmd algorithm
 for t in range(1000):
-    delta = updates(prev_state, 0.01, 0.1, hessian_xy, hessian_yx, J_min, J_max, breg_min)
+    delta = updates(prev_state, 0.01, 0.1, hessian_xy, hessian_yx, grad_min, grad_max, breg_min)
     print(prev_state)
     new_state = cmd_step(prev_state, delta, breg_min)
     print(new_state)
     prev_state = new_state
 
-    J_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).reshape(n,)
-    J_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).reshape(1,)
+    grad_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).reshape(n,)
+    grad_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).reshape(1,)
     hessian_xy = lambda v: np.dot(H_xy(prev_state.minPlayer, prev_state.maxPlayer).reshape(n, 1), v)
     hessian_yx = lambda v: np.dot(H_yx(prev_state.minPlayer, prev_state.maxPlayer).reshape(1, n), v)
 
@@ -114,10 +114,10 @@ print(new_state)
 """
 
 
-# CMD main algorithm test with structured variables, vector example from RRL paper
+# cmd main algorithm test with structured variables, vector example from RRL paper
 # using the sampling functions from RRL repository.
 # The min player has two variables, K and Lambda. The max player has a single variable L.
-
+"""
 # Problem Parameters
 A = np.array([[1,1],[0,1]])
 B = np.array([[0],[1]])
@@ -152,14 +152,16 @@ dual_y = y
 prev_state = CMDState(x, y, dual_x, dual_y)
 
 # Get gradients and hessians
+print("-- about to compute gradients --")
 DK,DL,DKL = gradient(50,100,A,B,C,Q,Ru,Rw,prev_state.minPlayer[0],y,T)
+print("--done with gradient computation--")
 DfLambda = Df_lambda(prev_state.minPlayer[1],y,Q,q,Rw,nx)
 DfL = Df_L(prev_state.minPlayer[1],y,Q,q,Rw,nx)
 DfLambdaL = Df_lambda_L(prev_state.minPlayer[1],y,Q,q,Rw,nx)
 DfLLambda = Df_L_lambda(prev_state.minPlayer[1],y,Q,q,Rw,nx)
 
-J_max = DL + DfL
-J_min = [DK, DfLambda]
+grad_max = DL + DfL
+grad_min = [DK, DfLambda]
 # hessian_xy = lambda v: [np.matmul(DKL, v.T).T, np.tensordot(DfLambdaL, DL)]
 def hessian_xy_generator(DKL,DfLambdaL):
     def hessian_xy(max_tree):
@@ -174,7 +176,7 @@ def hessian_yx_generator(DKL,DfLLambda):
         return np.matmul(DKL.T,K_var.T).T + np.tensordot(DfLLambda,Lambda_var) # returns maxPlayer structure
     return hessian_yx
 
-# Main CMD algorithm
+# Main cmd algorithm
 state_list = []
 state_list.append(prev_state)
 minPlayer_list_1 = [prev_state.minPlayer[0][0][0]]
@@ -184,7 +186,7 @@ maxPlayer_list_2 = [prev_state.maxPlayer[0][1]]
 
 
 for t in range(2000):
-    delta = updates(prev_state, 2e-5, 2e-5, hessian_xy_generator(DKL,DfLambdaL), hessian_yx_generator(DKL,DfLLambda), J_min, J_max, breg_min)
+    delta = updates(prev_state, 2e-5, 2e-5, hessian_xy_generator(DKL,DfLambdaL), hessian_yx_generator(DKL,DfLLambda), grad_min, grad_max, breg_min)
     new_state = cmd_step(prev_state, delta, breg_min)
 
     # Saving data
@@ -209,24 +211,23 @@ for t in range(2000):
 
     prev_state = new_state
 
-    DK, DL, DKL = gradient(50, 200, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], y, T)
+    print("-- about to compute gradients --")
+    DK, DL, DKL = gradient(50, 100, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], y, T)
+    print("--done with gradient computation--")
     DfLambda = Df_lambda(prev_state.minPlayer[1], y, Q, q, Rw, nx)
     DfL = Df_L(prev_state.minPlayer[1], y, Q, q, Rw, nx)
     DfLambdaL = Df_lambda_L(prev_state.minPlayer[1], y, Q, q, Rw, nx)
     DfLLambda = Df_L_lambda(prev_state.minPlayer[1], y, Q, q, Rw, nx)
-    J_max = DL + DfL
-    J_min = [DK, DfLambda]
-
-
-
+    grad_max = DL + DfL
+    grad_min = [DK, DfLambda]
 
 print(prev_state)
 print(new_state)
-
+"""
 
 
 # Test lagrangian making portion, skip for now
-""""
+
 def obj_func(x, y):
     return 2 * x * y - (1 - y) ** 2
 
@@ -234,7 +235,8 @@ def obj_func(x, y):
 breg_min = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
 breg_max = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
 
-lagrangian, breg_min_aug, breg_max_aug, init_multipliers = make_lagrangian(obj_func, breg_min, breg_max)
-print(lagrangian(1., 2., obj_func))
-"""
+init_multipliers, lagrangian, breg_min_aug, breg_max_aug = make_lagrangian(obj_func, breg_min, breg_max)
+print(lagrangian([1.],[2.]))
+
+
 

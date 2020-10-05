@@ -98,17 +98,17 @@ def inv_D2P_pd(v):
 # DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
 # DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd, v)
 #
-# min_augmented_DP = [lambda x: x, lambda v: jax.tree_map(DP_pd, v)]  # [breg_min.DP, DP_eq_min, DP_ineq_min]
-# min_augmented_DP_inv = [DP_inv_eq_min, DP_inv_ineq_min]  # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
+# min_augmented_DP = (lambda x: x, lambda v: jax.tree_map(DP_pd, v))  # [breg_min.DP, DP_eq_min, DP_ineq_min]
+# min_augmented_DP_inv = (DP_inv_eq_min, DP_inv_ineq_min)  # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
 #
 # D2P_eq_min = lambda v: jax.tree_map(id_func, v)
 # D2P_ineq_min = lambda v: jax.tree_map(D2P_pd, v)
-# min_augmented_D2P = [ D2P_eq_min, D2P_ineq_min]
+# min_augmented_D2P = ( D2P_eq_min, D2P_ineq_min)
 #
 # # inv_D2P_eq_min = lambda v: jax.tree_map(lambda x: x, v)
 # inv_D2P_eq_min = lambda v: jax.tree_map(id_func, v)
 # inv_D2P_ineq_min = lambda v: jax.tree_map(inv_D2P_pd, v)
-# min_augmented_D2P_inv = [inv_D2P_eq_min, inv_D2P_ineq_min]
+# min_augmented_D2P_inv = (inv_D2P_eq_min, inv_D2P_ineq_min)
 #
 #
 # key1 = random.PRNGKey(0)
@@ -118,13 +118,14 @@ def inv_D2P_pd(v):
 # W1 = random.normal(key, (3,3))
 # W2 = random.normal(key1, (3,3))
 #
-# x = [(x1,x2), (x1,x1,x2)]
-# W = [(W1,W2), (W1,W1,W2)]
+# x = ((x1,x2), (x1,x1,x2))
+# W = ((W1,W2), (W1,W1,W2))
 #
-# print(jax.tree_multimap(lambda f, x: f(x), min_augmented_DP, W))
-# print(_tree_apply(min_augmented_DP, x))
-
-
+# print(jax.tree_multimap(lambda f, x: f(x), min_augmented_DP, x))
+# print(DP_pd(x1))
+# print(DP_pd(x2))
+#
+#
 # Check if the inv(D2P) match the closed form.
 # print(inv_D2P_pd(W1)(np.identity(W1.shape[0])))
 # print(np.linalg.matrix_power(W1,2).T)
