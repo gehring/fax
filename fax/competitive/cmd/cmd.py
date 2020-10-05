@@ -2,9 +2,10 @@ import collections
 from fax import math
 import jax
 import jax.numpy as jnp
-from jax import tree_util, jacfwd, random
+from jax import tree_util, jacfwd, random, grad, jvp
 from jax.scipy.sparse import linalg
-from cmd_helper import DP_pd, DP_inv_pd, inv_D2P_pd, D2P_pd, id_func
+from jax.scipy import linalg as scipy_linalg
+# from cmd_helper import DP_pd, DP_inv_pd, inv_D2P_pd, D2P_pd, id_func
 from functools import partial
 
 BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P", "inv_D2P"])
@@ -12,6 +13,70 @@ BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "
 # AugmentedDPinv = collections.namedtuple("AugmentedDPinv", ["DPinv_primal","DPinv_eq","DPinv_ineq"])
 # AugmentedD2P = collections.namedtuple("AugmentedD2P", ["D2P_primal", "D2P_eq", "D2P_ineq"])
 # AugmentedD2Pinv = collections.namedtuple("AugmentedD2Pinv", ["D2Pinv_primal","D2Pinv_eq","D2Pinv_ineq"])
+
+def DP_hand(vec, nx):
+    temp = jnp.reshape(vec, (nx, nx))
+    return (-jnp.linalg.inv(temp).T + temp).reshape(nx**2, 1)
+
+
+def matrix_DP_pd(M):
+    return -jnp.linalg.slogdet(M)[1]
+
+
+def vector_DP_pd(v):
+    return jnp.dot(v, jnp.log(v))
+
+
+def DP_pd(v):
+    m = len(np.shape(v))
+    if m == 1:
+        out = grad(lambda x: jnp.dot(x, jnp.log(x)))(v)
+    else:
+        out = grad(lambda M: -jnp.linalg.slogdet(M)[1])(v)
+    return out
+
+
+def vector_DP_inv_pd(v):
+    return jnp.exp(v - jnp.ones_like(v))
+
+
+def DP_inv_pd(v):
+    m = len(jnp.shape(v))
+    if m == 1:
+        out = vector_DP_inv_pd(v)
+    else:
+        out = -scipy_linalg.inv(v).T
+    return out
+
+
+def id_func(x):
+    return lambda u: jnp.dot(jnp.identity(x.shape[0]), u)
+
+
+def hvp(f, primals, tangents):
+    return jvp(grad(f), primals, tangents)[1]
+
+
+def D2P_pd(v):
+    m = len(jnp.shape(v))
+    if m == 1:
+        def out(u):
+            return hvp(vector_DP_pd, (v,), (u,))
+    else:
+        def out(u):
+            return hvp(matrix_DP_pd, (v,), (u,))
+    return out
+
+
+def inv_D2P_pd(v):
+    m = len(jnp.shape(v))
+    if m == 1:
+        def out(u):
+            return jnp.dot(jnp.diag(v), u)
+    else:
+        def out(u):
+            return jnp.dot(jnp.linalg.matrix_power(v, 2).T, u)
+    return out
 
 
 def D2P_l2(v):
