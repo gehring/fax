@@ -29,6 +29,8 @@ def root_solve(func, init_xs, params, solver, rev_solver=None):
         defined using the implicit function theorem.
     """
     del func, rev_solver
+    init_xs = jax.tree_map(jax.lax.stop_gradient, init_xs)
+    params = jax.tree_map(jax.lax.stop_gradient, params)
     return solver(init_xs, params)
 
 
