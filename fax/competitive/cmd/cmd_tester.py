@@ -1,12 +1,20 @@
 import jax.numpy as np
 from jax import random, grad, jacfwd
-# from jax.scipy import linalg
+from jax.scipy import linalg
 from cmd_helper import DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd
-from cmd import make_lagrangian, updates, cmd_step, pd_bregman
+from cmd import make_lagrangian, updates, cmd_step, _tree_apply, make_bound_breg
 import collections
 from lq_game_helper import proj, gradient, Df_lambda, Df_L, Df_lambda_L, Df_L_lambda
 import jax.ops
 import pickle
+import numpy as np
+from scipy.optimize import minimize
+
+import jax
+import jax.numpy as jnp
+from jax import jit, vmap, lax
+
+from jax.config import config
 
 BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P", "inv_D2P"])
 CMDState = collections.namedtuple("CMDState", "minPlayer maxPlayer minPlayer_dual maxPlayer_dual")
@@ -23,8 +31,47 @@ x = [(x1, x2), (x1, x1, x2)]
 W = [(W1, W2), (W1, W1, W2)]
 
 
+DP_inv_eq_min = lambda v: jax.tree_map(lambda x: x, v)
+DP_inv_ineq_min = lambda v: jax.tree_map(DP_inv_pd, v)
+
+min_augmented_DP = (lambda x: x, lambda v: jax.tree_map(DP_pd, v))  # [breg_min.DP, DP_eq_min, DP_ineq_min]
+min_augmented_DP_inv = (DP_inv_eq_min, DP_inv_ineq_min)  # [breg_min.DP_inv, DP_inv_eq_min, DP_inv_ineq_min]
+
+D2P_eq_min = lambda v: jax.tree_map(id_func, v)
+D2P_ineq_min = lambda v: jax.tree_map(D2P_pd, v)
+min_augmented_D2P = ( D2P_eq_min, D2P_ineq_min)
+
+# inv_D2P_eq_min = lambda v: jax.tree_map(lambda x: x, v)
+inv_D2P_eq_min = lambda v: jax.tree_map(id_func, v)
+inv_D2P_ineq_min = lambda v: jax.tree_map(inv_D2P_pd, v)
+min_augmented_D2P_inv = (inv_D2P_eq_min, inv_D2P_ineq_min)
+
+
+key1 = random.PRNGKey(0)
+key = random.PRNGKey(1)
+x1 = np.array([1., 2., 3.,4., 5.])
+x2 = random.normal(key1, (5,))
+W1 = random.normal(key, (3,3))
+W2 = random.normal(key1, (3,3))
+
+x = ((x1,x2), (x1,x1,x2))
+W = ((W1,W2), (W1,W1,W2))
+
+print(jax.tree_multimap(lambda f, x: f(x), min_augmented_DP, x))
+print(DP_pd(x1))
+print(DP_pd(x2))
+
+
+# Check if the inv(D2P) match the closed form.
+print(inv_D2P_pd(W1)(np.identity(W1.shape[0])))
+print(np.linalg.matrix_power(W1,2).T)
+
+print(inv_D2P_pd(x2)(x1))
+print(np.dot(np.diag(x2),x1))
+
+
 # cmd main algorithm test with single variables, scalar example from cmd paper
-"""
+""""
 def obj_func(x, y):
     return 2 * x * y - (1 - y) ** 2
 
@@ -43,21 +90,21 @@ grad_max = jacfwd(obj_func,1)
 H_xy = jacfwd(grad_min,1)
 H_yx =jacfwd(grad_max,0)
 
-grad_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
-grad_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+gradient_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+gradient_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
 hessian_xy = lambda v: H_xy(prev_state.minPlayer, prev_state.maxPlayer).flatten()*v
 hessian_yx = lambda v: H_yx(prev_state.minPlayer, prev_state.maxPlayer).flatten()*v
 
 # Main cmd algorithm
 for t in range(1000):
-    delta = updates(prev_state, 0.001, 0.001, hessian_xy, hessian_yx, grad_min, grad_max, breg_min, breg_max)
+    delta = updates(prev_state, 0.001, 0.001, hessian_xy, hessian_yx, gradient_min, gradient_max, breg_min, breg_max)
     print(prev_state)
     new_state = cmd_step(prev_state, delta, breg_min, breg_max)
     print(new_state)
     prev_state = new_state
 
-    grad_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
-    grad_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+    gradient_min = grad_min(prev_state.minPlayer, prev_state.maxPlayer).flatten()
+    gradient_max = grad_max(prev_state.minPlayer, prev_state.maxPlayer).flatten()
     hessian_xy = lambda v: H_xy(prev_state.minPlayer, prev_state.maxPlayer).flatten() * v
     hessian_yx = lambda v: H_yx(prev_state.minPlayer, prev_state.maxPlayer).flatten() * v
 
@@ -226,17 +273,122 @@ print(new_state)
 """
 
 
-# Test lagrangian making portion, skip for now
+# # Test lagrangian making portion, works!
+# def obj_func(x, y):
+#     return (2 * x * y - (1 - y) ** 2)[0]
+#
+#
+# breg_min = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
+# breg_max = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
+#
+# init_multipliers, lagrangian, breg_min_aug, breg_max_aug = make_lagrangian(obj_func, breg_min, breg_max)
+# min_P, max_P = init_multipliers(np.array([1.,]),np.array([2.,]))
+# dual_min = _tree_apply(breg_min_aug.DP,min_P)
+# dual_max = _tree_apply(breg_max_aug.DP,max_P)
+# prev_state = CMDState(min_P,max_P, dual_min, dual_max)
+# updates(prev_state,1e-4, 1e-4, breg_min=breg_min_aug, breg_max = breg_max_aug, objective_func=lagrangian)
 
-def obj_func(x, y):
-    return 2 * x * y - (1 - y) ** 2
 
 
-breg_min = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
-breg_max = BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
 
-init_multipliers, lagrangian, breg_min_aug, breg_max_aug = make_lagrangian(obj_func, breg_min, breg_max)
-print(lagrangian([1.],[2.]))
+horizon = 10                              # how many unit time we simulate for
+num_control_intervals = 20                # how many intervals of control
+step_size = horizon/num_control_intervals # how long to hold each control value
+
+control_bounds = np.empty((num_control_intervals, 2))
+control_bounds[:] = [-0.75, 1.0]
+# (^ this can stay an onp array)
+
+x0 = jnp.array([0., 1.]) # start state
+xf = jnp.array([0., 0.]) # end state
+
+# Dynamics function
+@jit
+def f(x, u):
+  x0 = x[0]
+  x1 = x[1]
+  return jnp.asarray([(1. - x1**2) * x0 - x1 + u, x0])
+
+# Instantaneous cost
+@jit
+def c(x, u):
+  return jnp.dot(x, x) + u**2
+
+vector_c = jit(vmap(c))
+
+# Integrate from the start state, using controls, to the final state
+@jit
+def integrate_fwd(us):
+  def rk4_step(x, u):
+    k1 = f(x, u)
+    k2 = f(x + step_size * k1/2, u)
+    k3 = f(x + step_size * k2/2, u)
+    k4 = f(x + step_size * k3  , u)
+    return x + (step_size/6)*(k1 + 2*k2 + 2*k3 + k4)
+
+  def fn(carried_state, u):
+    one_step_forward = rk4_step(carried_state, u)
+    return one_step_forward, one_step_forward # (carry, y)
+
+  last_state_and_all_xs = lax.scan(fn, x0, us)
+  return last_state_and_all_xs
+
+# Calculate cost over entire trajectory
+@jit
+def objective(us):
+  _, xs = integrate_fwd(us)
+  all_costs = vector_c(xs, us)
+  return jnp.sum(all_costs) + jnp.dot(x0, x0) # add in cost of start state (will make no difference)
+
+# Calculate defect of final state
+@jit
+def equality_constraints(us):
+  final_state, _ = integrate_fwd(us)
+  return final_state - xf
+
+rng = jax.random.PRNGKey(42)
+# rng, rng_input = jax.random.split(rng)
+initial_controls_guess = jax.random.uniform(rng, shape=(num_control_intervals,), minval=-0.76, maxval=0.9)
+
+constraints = ({'type': 'eq',
+                'fun': equality_constraints,
+                'jac': jax.jit(jax.jacrev(equality_constraints))
+                })
+
+options = {'maxiter': 500, 'ftol': 1e-6}
 
 
+
+
+# Make Lagrangian out of the original OCP
+key = jax.random.PRNGKey(1)
+
+# Generate Lagrangian-related functions and augmented Bregman divergence
+init_multipliers, lagrangian, breg_min_aug, breg_max_aug = make_lagrangian(objective, breg_min = make_bound_breg(lb=-0.75, ub=1.0), min_equality_constraints=equality_constraints)
+
+# Initialize the augmented min player and max player
+min_P, max_P = init_multipliers(initial_controls_guess,None,key)
+dual_min = _tree_apply(breg_min_aug.DP,min_P)
+dual_max = _tree_apply(breg_max_aug.DP,max_P)
+
+# Construct a CMD state
+init_state = CMDState(min_P, max_P, dual_min, dual_max )
+
+
+# Testing tge Lagrangian funciton and the Bregman potentials
+L = lagrangian(min_P, max_P) # L =  objective(initial_controls_guess) + max_P[1] @ equality_constraints(initial_controls_guess)
+
+_tree_apply( breg_max_aug.DP_inv,max_P)
+_tree_apply(_tree_apply( breg_max_aug.D2P,max_P),max_P)
+_tree_apply(_tree_apply( breg_max_aug.inv_D2P,max_P),max_P)
+
+_tree_apply( breg_min_aug.DP_inv,min_P)
+_tree_apply(_tree_apply( breg_min_aug.D2P,min_P),min_P)
+_tree_apply(_tree_apply( breg_min_aug.inv_D2P,min_P),min_P)
+
+prev_state = init_state
+for i in range(10):
+    delta = updates(prev_state,1e-4, 1e-4, breg_min=breg_min_aug, breg_max = breg_max_aug, objective_func=lagrangian)
+    new_state = cmd_step(prev_state, delta, breg_min_aug, breg_max_aug)
+    prev_state = new_state
 

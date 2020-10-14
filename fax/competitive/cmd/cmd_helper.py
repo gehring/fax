@@ -126,7 +126,7 @@ def inv_D2P_pd(v):
 # print(DP_pd(x2))
 #
 #
-# Check if the inv(D2P) match the closed form.
+# # Check if the inv(D2P) match the closed form.
 # print(inv_D2P_pd(W1)(np.identity(W1.shape[0])))
 # print(np.linalg.matrix_power(W1,2).T)
 #
