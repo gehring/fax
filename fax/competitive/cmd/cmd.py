@@ -20,29 +20,29 @@ BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "
 def id_func(x):
     return lambda u: jnp.dot(jnp.identity(x.shape[0]), u)
 
-
+@jit
 def hvp(f, primals, tangents):
     return jvp(grad(f), primals, tangents)[1]
 
-
+@jit
 def breg_bound(vec, lb=-1.0, ub=1.0, *args, **kwargs):
     return jnp.sum((- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb))
 
 
 DP_bound = jax.grad(breg_bound, 0)
 
-
+@jit
 def DP_inv_bound(vec, lb=-1.0, ub=1.0):
     return (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
 
-
+@jit
 def D2P_bound(vec, lb=-1.0, ub=1.0):
     def out(u):
         return jvp(lambda x: DP_bound(x, lb, ub), (vec,), (u,))[1]
 
     return out
 
-
+@jit
 def inv_D2P_bound(vec, lb=-1.0, ub=1.0):
     if len(jnp.shape(vec)) <= 1:
         def out(u):
@@ -55,20 +55,20 @@ def inv_D2P_bound(vec, lb=-1.0, ub=1.0):
 
 bound_breg = BregmanPotential(DP_bound, DP_inv_bound, D2P_bound, inv_D2P_bound)
 
-
+@jit
 def DP_hand(vec, nx):
     temp = jnp.reshape(vec, (nx, nx))
     return (-jnp.linalg.inv(temp).T + temp).reshape(nx ** 2, 1)
 
-
+@jit
 def matrix_DP_pd(M):
     return -jnp.linalg.slogdet(M)[1]
 
-
+@jit
 def vector_DP_pd(v):
     return jnp.dot(v, jnp.log(v))
 
-
+@jit
 def DP_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -77,11 +77,11 @@ def DP_pd(v):
         out = grad(lambda M: -jnp.linalg.slogdet(M)[1])(v)
     return out
 
-
+@jit
 def vector_DP_inv_pd(v):
     return jnp.exp(v - jnp.ones_like(v))
 
-
+@jit
 def DP_inv_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -90,7 +90,7 @@ def DP_inv_pd(v):
         out = -scipy_linalg.inv(v).T
     return out
 
-
+@jit
 def D2P_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -101,7 +101,7 @@ def D2P_pd(v):
             return hvp(matrix_DP_pd, (v,), (u,))
     return out
 
-
+@jit
 def inv_D2P_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -112,11 +112,11 @@ def inv_D2P_pd(v):
             return jnp.dot(jnp.linalg.matrix_power(v, 2).T, u)
     return out
 
-
+@jit
 def D2P_l2(v):
     return lambda x: x
 
-
+@jit
 def default_func(x, *args, **kwargs):
     return None
 

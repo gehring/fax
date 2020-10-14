@@ -387,7 +387,7 @@ _tree_apply(_tree_apply( breg_min_aug.D2P,min_P),min_P)
 _tree_apply(_tree_apply( breg_min_aug.inv_D2P,min_P),min_P)
 
 prev_state = init_state
-for i in range(10):
+for i in range(1):
     delta = updates(prev_state,1e-4, 1e-4, breg_min=breg_min_aug, breg_max = breg_max_aug, objective_func=lagrangian)
     new_state = cmd_step(prev_state, delta, breg_min_aug, breg_max_aug)
     prev_state = new_state
