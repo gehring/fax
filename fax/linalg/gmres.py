@@ -88,7 +88,13 @@ def arnoldi_iteration(A, b, n, M=None):
 
 @jax.jit
 def lstsq(a, b):
-    return jnp.linalg.lstsq(a, b, rcond=1e-5)[0]
+    out, _, rank, singular_values = jnp.linalg.lstsq(a, b)
+    return jax.lax.cond(
+      jnp.all(singular_values < 1e-12) | rank == 0,
+      lambda y: jnp.zeros_like(y),
+      lambda y: y,
+      out,
+    )
 
 
 def _gmres(A, b, x0, n, M, residual=None):
