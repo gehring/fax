@@ -16,7 +16,7 @@ BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "
 # AugmentedD2P = collections.namedtuple("AugmentedD2P", ["D2P_primal", "D2P_eq", "D2P_ineq"])
 # AugmentedD2Pinv = collections.namedtuple("AugmentedD2Pinv", ["D2Pinv_primal","D2Pinv_eq","D2Pinv_ineq"])
 
-
+@jit
 def id_func(x):
     return lambda u: jnp.dot(jnp.identity(x.shape[0]), u)
 
@@ -35,14 +35,14 @@ DP_bound = jax.grad(breg_bound, 0)
 def DP_inv_bound(vec, lb=-1.0, ub=1.0):
     return (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
 
-@jit
+
 def D2P_bound(vec, lb=-1.0, ub=1.0):
     def out(u):
         return jvp(lambda x: DP_bound(x, lb, ub), (vec,), (u,))[1]
 
     return out
 
-@jit
+
 def inv_D2P_bound(vec, lb=-1.0, ub=1.0):
     if len(jnp.shape(vec)) <= 1:
         def out(u):
@@ -68,7 +68,7 @@ def matrix_DP_pd(M):
 def vector_DP_pd(v):
     return jnp.dot(v, jnp.log(v))
 
-@jit
+
 def DP_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -77,11 +77,11 @@ def DP_pd(v):
         out = grad(lambda M: -jnp.linalg.slogdet(M)[1])(v)
     return out
 
-@jit
+
 def vector_DP_inv_pd(v):
     return jnp.exp(v - jnp.ones_like(v))
 
-@jit
+
 def DP_inv_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -90,7 +90,7 @@ def DP_inv_pd(v):
         out = -scipy_linalg.inv(v).T
     return out
 
-@jit
+
 def D2P_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -101,7 +101,7 @@ def D2P_pd(v):
             return hvp(matrix_DP_pd, (v,), (u,))
     return out
 
-@jit
+
 def inv_D2P_pd(v):
     m = len(jnp.shape(v))
     if m == 1:
@@ -112,7 +112,6 @@ def inv_D2P_pd(v):
             return jnp.dot(jnp.linalg.matrix_power(v, 2).T, u)
     return out
 
-@jit
 def D2P_l2(v):
     return lambda x: x
 
@@ -152,9 +151,7 @@ def make_bound_breg(lb=-1.0, ub=1.0):
             if len(jnp.shape(vec)) <= 1:
                 return lambda u: jnp.dot(jnp.diag(1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
             else:
-                print("hey there")
                 return lambda u: (1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
-
         return out
 
     return BregmanPotential(DP_bound_internal(lb, ub), DP_inv_bound_internal(lb, ub),
@@ -379,7 +376,7 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         def hessian_yx(tangent):
             return make_mixed_jvp(objective_func, prev_state.minPlayer, prev_state.maxPlayer, True)(
                 tangent)
-
+    @jit
     def linear_opt_min(min_tree):
         temp = hessian_yx(min_tree)  # returns max_tree type
         temp1 = _tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer),
@@ -389,9 +386,9 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         temp4 = _tree_apply(_tree_apply(breg_min.D2P, prev_state.minPlayer),
                             min_tree)  # also returns min_tree type
         temp5 = tree_util.tree_map(lambda x: 1 / eta_min * x, temp4)
-        print("linear operator being called! - min")
+        # print("linear operator being called! - min")
         return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5)  # min_tree type
-
+    @jit
     def linear_opt_max(max_tree):
         temp = hessian_xy(max_tree)
         temp1 = _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), temp)
@@ -399,7 +396,7 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         temp3 = tree_util.tree_map(lambda x: eta_min * x, temp2)  # max_tree type
         temp4 = _tree_apply(_tree_apply(breg_max.D2P, prev_state.maxPlayer), max_tree)
         temp5 = tree_util.tree_map(lambda x: 1 / eta_max * x, temp4)  # max_tree type
-        print("linear operator being called! - max")
+        # print("linear operator being called! - max")
         return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5)  # max_tree type
 
     # calculate the vectors in equation (4)
@@ -412,9 +409,9 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
     temp2 = tree_util.tree_map(lambda x: eta_min * x, temp)
     vec_max = tree_util.tree_multimap(lambda x, y: x - y, grad_max, temp2)
 
-    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=1000, tol=1e-6)
+    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=500, tol=1e-4)
     update_min = tree_util.tree_multimap(lambda x: -x, update_min)
-    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=1000, tol=1e-6)
+    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=500, tol=1e-4)
 
     return UpdateState(update_min, update_max)
 

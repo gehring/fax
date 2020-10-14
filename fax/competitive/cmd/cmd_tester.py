@@ -1,5 +1,6 @@
 import jax.numpy as np
 from jax import random, grad, jacfwd
+import jaxlib
 from jax.scipy import linalg
 from cmd_helper import DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd
 from cmd import make_lagrangian, updates, cmd_step, _tree_apply, make_bound_breg
@@ -13,7 +14,8 @@ from scipy.optimize import minimize
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap, lax
-
+print(jax.__version__)
+print(jaxlib.__version__)
 from jax.config import config
 
 BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P", "inv_D2P"])
@@ -387,8 +389,12 @@ _tree_apply(_tree_apply( breg_min_aug.D2P,min_P),min_P)
 _tree_apply(_tree_apply( breg_min_aug.inv_D2P,min_P),min_P)
 
 prev_state = init_state
-for i in range(1):
-    delta = updates(prev_state,1e-4, 1e-4, breg_min=breg_min_aug, breg_max = breg_max_aug, objective_func=lagrangian)
+for i in range(200):
+    delta = updates(prev_state,1e-3, 1e-3, breg_min=breg_min_aug, breg_max = breg_max_aug, objective_func=lagrangian)
     new_state = cmd_step(prev_state, delta, breg_min_aug, breg_max_aug)
     prev_state = new_state
+    if i%1 ==0:
+        print("---------------",i,"------------")
+        print(lagrangian(new_state.minPlayer, new_state.maxPlayer))
+print(new_state.minPlayer)
 
