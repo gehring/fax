@@ -12,10 +12,22 @@ import jax.numpy as jnp
 
 from jax.config import config
 config.update("jax_enable_x64", True)
+config.disable_omnistaging()
 
 
 @pytest.fixture(scope="module", params=[linalg.gmres])
 def dense_solver(request):
+    linear_solver = request.param
+
+    @jax.jit
+    def _solve(A, b):
+        return linear_solver(lambda x: jnp.dot(A, x), b, tol=1e-6)[0]
+
+    return _solve
+
+
+@pytest.fixture(scope="module", params=[linalg.minres])
+def symmetric_solver(request):
     linear_solver = request.param
 
     @jax.jit
@@ -32,13 +44,27 @@ def dense_solver(request):
         unique=True),
     hypothesis.extra.numpy.arrays(
         np.float_, 20, elements=hypothesis.strategies.floats(1e-2, 1)))
-def test_linear_solve(dense_solver, A, b):
+def test_symmetric_linear_solve(symmetric_solver, A, b):
+    A = A.T @ A
+    hypothesis.assume(np.linalg.det(A) > 1e-3)
+    jax.test_util.check_close(symmetric_solver(A, b), np.linalg.solve(A, b),
+                              rtol=1e-5, atol=1e-5)
+
+
+@hypothesis.settings(deadline=None)
+@hypothesis.given(
+    hypothesis.extra.numpy.arrays(
+        np.float_, (20, 20), elements=hypothesis.strategies.floats(0, 1),
+        unique=True),
+    hypothesis.extra.numpy.arrays(
+        np.float_, 20, elements=hypothesis.strategies.floats(1e-2, 1)))
+def test_symmetric_linear_solve(dense_solver, A, b):
     hypothesis.assume(np.linalg.det(A) > 1e-3)
     jax.test_util.check_close(dense_solver(A, b), np.linalg.solve(A, b),
                               rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.parametrize("solver", [linalg.gmres])
+@pytest.mark.parametrize("solver", [linalg.gmres, linalg.minres])
 def test_pytree_input(solver):
     factor = 2.0
 

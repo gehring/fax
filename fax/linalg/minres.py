@@ -20,12 +20,16 @@ def _tree_vdot(v, u):
     return sum(jax.tree_leaves(vdots))
 
 
+def _tree_where(cond, x, y):
+    return jax.tree_multimap(lambda u, v: jnp.where(cond, u, v), x, y)
+
+
 def _identity(x):
     return x
 
 
 def _shapes(pytree):
-  return map(jnp.shape, jax.tree_leaves(pytree))
+    return list(map(jnp.shape, jax.tree_leaves(pytree)))
 
 
 class _MINRESNorms(NamedTuple):
@@ -170,17 +174,15 @@ def _solve_status(i: int,
     return status
 
 
-def _minres(A, b, x0, M, maxiter, tol, shift=None, callback=None,
-            status_callback=None):
-
-    dtype = jnp.result_type(*jax.tree_leaves(x0))
-    eps = jnp.finfo(dtype).eps
-
+def _minres(A, b, x0, M, maxiter, tol, shift=None, callback=None):
     r1 = _sub(b, A(x0))
     y = M(r1)
 
     beta1_sqr = _tree_vdot(r1, y)
     beta1 = jnp.sqrt(beta1_sqr)
+
+    dtype = beta1.dtype
+    eps = jnp.finfo(dtype).eps
 
     def cond(state):
         status, *_ = state
@@ -195,7 +197,7 @@ def _minres(A, b, x0, M, maxiter, tol, shift=None, callback=None,
         if shift is not None:
             y = _sub(y, _scalar_mul(shift, v))
 
-        y = jnp.where(
+        y = _tree_where(
             i >= 2,
             _sub(y, _scalar_mul(prev_info.beta / prev_info.prev_beta, r1)),
             y,
@@ -233,22 +235,22 @@ def _minres(A, b, x0, M, maxiter, tol, shift=None, callback=None,
                 prev_info)
 
     init_res_info = _ResidualInfo(
-        epsilon=0.,
-        delta=0.,
-        dbar=0.,
-        gbar=0.,
-        root=0.,
+        epsilon=jnp.zeros((), dtype=dtype),
+        delta=jnp.zeros((), dtype=dtype),
+        dbar=jnp.zeros((), dtype=dtype),
+        gbar=jnp.zeros((), dtype=dtype),
+        root=jnp.zeros((), dtype=dtype),
     )
     init_rot = _Rotation(
-        cs=-1.,
-        sn=0.,
-        gamma=0.,
+        cs=-jnp.ones((), dtype=dtype),
+        sn=jnp.zeros((), dtype=dtype),
+        gamma=jnp.zeros((), dtype=dtype),
     )
     init_info = _MINRESInfo(
         beta=beta1,
-        prev_beta=0.,
-        tnorm2=0.,
-        phi=0.,
+        prev_beta=jnp.zeros((), dtype=dtype),
+        tnorm2=jnp.zeros((), dtype=dtype),
+        phi=jnp.zeros((), dtype=dtype),
         phibar=beta1,
         gmin=jnp.finfo(dtype).max,
         gmax=jnp.zeros((), dtype=dtype),
