@@ -12,7 +12,6 @@ import jax.numpy as jnp
 
 from jax.config import config
 config.update("jax_enable_x64", True)
-config.disable_omnistaging()
 
 
 @pytest.fixture(scope="module", params=[linalg.gmres])
@@ -58,7 +57,7 @@ def test_symmetric_linear_solve(symmetric_solver, A, b):
         unique=True),
     hypothesis.extra.numpy.arrays(
         np.float_, 20, elements=hypothesis.strategies.floats(1e-2, 1)))
-def test_symmetric_linear_solve(dense_solver, A, b):
+def test_linear_solve(dense_solver, A, b):
     hypothesis.assume(np.linalg.det(A) > 1e-3)
     jax.test_util.check_close(dense_solver(A, b), np.linalg.solve(A, b),
                               rtol=1e-5, atol=1e-5)

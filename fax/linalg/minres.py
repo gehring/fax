@@ -166,7 +166,7 @@ def _solve_status(i: int,
     status = jnp.where(test1 <= tol, 1, status)
 
     status = jnp.where(
-        (i == 1) & (info.prev_beta / beta1 <= 10 * eps),
+        (i == 1) & (info.beta / beta1 <= 10 * eps),
         -1,
         status,
     )
@@ -231,8 +231,8 @@ def _minres(A, b, x0, M, maxiter, tol, shift=None, callback=None):
         status = _solve_status(
             i, norms, res_info, next_info, maxiter, beta1, eps, tol)
 
-        return (status, x, i, y, r1, r2, w, w2, prev_res_info, rotation,
-                prev_info)
+        return (status, x, i, y, r1, r2, w, w2, res_info, next_rotation,
+                next_info)
 
     init_res_info = _ResidualInfo(
         epsilon=jnp.zeros((), dtype=dtype),
@@ -281,7 +281,7 @@ def minres(A, b, x0=None, tol=1e-5, maxiter=None, M=None, callback=None):
 
     if maxiter is None:
         size = sum(bi.size for bi in jax.tree_leaves(b))
-        maxiter = 5 * size  # copied from scip
+        maxiter = 5 * size  # copied from scipy
 
     if M is None:
         M = _identity
