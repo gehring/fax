@@ -4,7 +4,9 @@ from jax import grad, jvp
 from jax.scipy import linalg
 from jax import random
 from functools import partial
+from jax.config import config
 
+config.update("jax_enable_x64", True)
 
 # DP helper functions
 def DP_hand(vec, nx):

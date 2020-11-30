@@ -1,7 +1,9 @@
-import scipy.linalg as LA
+import jax.scipy.linalg as LA
 import jax.numpy as np
 from jax import jacfwd, grad, random, ops
+from jax.config import config
 
+config.update("jax_enable_x64", True)
 
 key = random.PRNGKey(0)
 

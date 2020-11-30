@@ -2,12 +2,13 @@ import collections
 from fax import math
 import jax
 import jax.numpy as jnp
-from jax import tree_util, jacfwd, random, grad, jvp, jit
+from jax import tree_util, jacfwd, random, grad, jvp
 from jax.scipy.sparse import linalg
 from jax.scipy import linalg as scipy_linalg
-# from cmd_helper import DP_pd, DP_inv_pd, inv_D2P_pd, D2P_pd, id_func
 from functools import partial
+from jax.config import config
 
+config.update("jax_enable_x64", True)
 BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P", "inv_D2P"])
 
 
@@ -16,22 +17,22 @@ BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "
 # AugmentedD2P = collections.namedtuple("AugmentedD2P", ["D2P_primal", "D2P_eq", "D2P_ineq"])
 # AugmentedD2Pinv = collections.namedtuple("AugmentedD2Pinv", ["D2Pinv_primal","D2Pinv_eq","D2Pinv_ineq"])
 
-@jit
+
 def id_func(x):
     return lambda u: jnp.dot(jnp.identity(x.shape[0]), u)
 
-@jit
+
 def hvp(f, primals, tangents):
     return jvp(grad(f), primals, tangents)[1]
 
-@jit
+
 def breg_bound(vec, lb=-1.0, ub=1.0, *args, **kwargs):
     return jnp.sum((- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb))
 
 
 DP_bound = jax.grad(breg_bound, 0)
 
-@jit
+
 def DP_inv_bound(vec, lb=-1.0, ub=1.0):
     return (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
 
@@ -55,16 +56,16 @@ def inv_D2P_bound(vec, lb=-1.0, ub=1.0):
 
 bound_breg = BregmanPotential(DP_bound, DP_inv_bound, D2P_bound, inv_D2P_bound)
 
-@jit
+
 def DP_hand(vec, nx):
     temp = jnp.reshape(vec, (nx, nx))
     return (-jnp.linalg.inv(temp).T + temp).reshape(nx ** 2, 1)
 
-@jit
+
 def matrix_DP_pd(M):
     return -jnp.linalg.slogdet(M)[1]
 
-@jit
+
 def vector_DP_pd(v):
     return jnp.dot(v, jnp.log(v))
 
@@ -115,7 +116,7 @@ def inv_D2P_pd(v):
 def D2P_l2(v):
     return lambda x: x
 
-@jit
+
 def default_func(x, *args, **kwargs):
     return None
 
@@ -172,13 +173,13 @@ def make_mixed_jvp(f, first_args, second_args, opposite=False):
     """
     if opposite is not True:
         given = second_args
-        gradfun = jit(jax.grad(f, 0))
+        gradfun = jax.grad(f, 0)
 
         def frozen_grad(y):
             return gradfun(first_args, y)
     else:
         given = first_args
-        gradfun = jit(jax.grad(f, 1))
+        gradfun = jax.grad(f, 1)
 
         def frozen_grad(x):
             return gradfun(x, second_args)
@@ -335,7 +336,8 @@ _tree_apply = partial(jax.tree_multimap, lambda f, x: f(x))
 
 
 def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad_min=None,
-            grad_max=None, breg_min=default_breg, breg_max=default_breg, objective_func=None):
+            grad_max=None, breg_min=default_breg, breg_max=default_breg, objective_func=None,
+            precond_b_min=True, precond_b_max=True):
     """Equation (4). Given current position (prev_state), compute the updates (del_x,del_y) to the players in cmd algorithm for next position.
 
     Args:
@@ -365,8 +367,8 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         # H_yx_func =jit(jacfwd(grad_max, 0))
 
         # Compute current gradient for min and max players
-        grad_min = jit(jacfwd(objective_func, 0))(prev_state.minPlayer, prev_state.maxPlayer)
-        grad_max = jit(jacfwd(objective_func, 1))(prev_state.minPlayer, prev_state.maxPlayer)
+        grad_min = jacfwd(objective_func, 0)(prev_state.minPlayer, prev_state.maxPlayer)
+        grad_max = jacfwd(objective_func, 1)(prev_state.minPlayer, prev_state.maxPlayer)
 
         # Define the mixed hessian-vector product linear operator at current position
         def hessian_xy(tangent):
@@ -376,7 +378,7 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         def hessian_yx(tangent):
             return make_mixed_jvp(objective_func, prev_state.minPlayer, prev_state.maxPlayer, True)(
                 tangent)
-    @jit
+
     def linear_opt_min(min_tree):
         temp = hessian_yx(min_tree)  # returns max_tree type
         temp1 = _tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer),
@@ -387,8 +389,9 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
                             min_tree)  # also returns min_tree type
         temp5 = tree_util.tree_map(lambda x: 1 / eta_min * x, temp4)
         # print("linear operator being called! - min")
-        return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5)  # min_tree type
-    @jit
+        out = tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5)
+        return out  # min_tree type
+
     def linear_opt_max(max_tree):
         temp = hessian_xy(max_tree)
         temp1 = _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), temp)
@@ -397,21 +400,47 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         temp4 = _tree_apply(_tree_apply(breg_max.D2P, prev_state.maxPlayer), max_tree)
         temp5 = tree_util.tree_map(lambda x: 1 / eta_max * x, temp4)  # max_tree type
         # print("linear operator being called! - max")
-        return tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5)  # max_tree type
+        out =  tree_util.tree_multimap(lambda x, y: x + y, temp3, temp5)  # max_tree type
+        return out
 
     # calculate the vectors in equation (4)
     temp = hessian_xy(_tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer), grad_max))
     temp2 = tree_util.tree_map(lambda x: eta_max * x, temp)
     vec_min = tree_util.tree_multimap(lambda arr1, arr2: arr1 + arr2, grad_min, temp2)
+    if precond_b_min:
+        # vec_min_tree, min_tree_def = tree_util.tree_flatten(vec_min)
+        # cond_min = tree_util.tree_unflatten(min_tree_def,
+        #                                     jax.tree_map(lambda x: jnp.linalg.norm(x, jnp.inf), vec_min_tree))
+        # vec_min = tree_util.tree_multimap(lambda x, y: x / y, vec_min, cond_min)
+        cond_min = max(jax.tree_map(lambda x: jnp.linalg.norm(x, jnp.inf), tree_util.tree_flatten(vec_min)[0]))
+        vec_min = tree_util.tree_map(lambda x: x / cond_min, vec_min)
+
+
 
     # temp = _tree_apply(hessian_yx, _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), grad_min))
     temp = hessian_yx(_tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), grad_min))
     temp2 = tree_util.tree_map(lambda x: eta_min * x, temp)
     vec_max = tree_util.tree_multimap(lambda x, y: x - y, grad_max, temp2)
+    if precond_b_max:
+        # vec_max_tree, max_tree_def = tree_util.tree_flatten(vec_max)
+        # cond_max = tree_util.tree_unflatten(max_tree_def,
+        #                                     jax.tree_map(lambda x: jnp.linalg.norm(x), vec_max_tree))
+        # vec_max = tree_util.tree_multimap(lambda x, y: x / y, vec_max,cond_max)
+        cond_max = max(jax.tree_map(lambda x: jnp.linalg.norm(x), tree_util.tree_flatten(vec_max)[0]))
+        vec_max = tree_util.tree_map(lambda x: x / cond_max, vec_max)
 
-    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=500, tol=1e-4)
-    update_min = tree_util.tree_multimap(lambda x: -x, update_min)
-    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=500, tol=1e-4)
+
+    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=1000, tol=1e-25)
+    if precond_b_min:
+        update_min = tree_util.tree_map(lambda x: cond_min * x, update_min)
+        # update_min = tree_util.tree_multimap(lambda x, y: y * x, cond_min, update_min)
+
+    update_min = tree_util.tree_map(lambda x: -x, update_min)
+
+    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=1000, tol=1e-25)
+    if precond_b_max:
+        update_max = tree_util.tree_map(lambda x: cond_max * x, update_max)
+        # update_max = tree_util.tree_multimap(lambda x, y: y * x, cond_max, update_max)
 
     return UpdateState(update_min, update_max)
 

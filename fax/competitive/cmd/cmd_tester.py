@@ -8,8 +8,8 @@ import collections
 from lq_game_helper import proj, gradient, Df_lambda, Df_L, Df_lambda_L, Df_L_lambda
 import jax.ops
 import pickle
-import numpy as np
 from scipy.optimize import minimize
+import matplotlib.pyplot as plt
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ from jax import jit, vmap, lax
 print(jax.__version__)
 print(jaxlib.__version__)
 from jax.config import config
+config.update("jax_enable_x64", True)
 
 BregmanPotential = collections.namedtuple("BregmanPotential", ["DP", "DP_inv", "D2P", "inv_D2P"])
 CMDState = collections.namedtuple("CMDState", "minPlayer maxPlayer minPlayer_dual maxPlayer_dual")
@@ -24,7 +25,7 @@ UpdateState = collections.namedtuple("UpdateState", "del_min del_max")
 
 key1 = random.PRNGKey(0)
 key = random.PRNGKey(1)
-x1 = np.array([1., 2., 3., 4., 5.])
+x1 = jnp.array([1., 2., 3., 4., 5.])
 x2 = random.normal(key1, (5, ))
 W1 = random.normal(key, (3, 3))
 W2 = random.normal(key1, (3, 3))
@@ -51,7 +52,7 @@ min_augmented_D2P_inv = (inv_D2P_eq_min, inv_D2P_ineq_min)
 
 key1 = random.PRNGKey(0)
 key = random.PRNGKey(1)
-x1 = np.array([1., 2., 3.,4., 5.])
+x1 = jnp.array([1., 2., 3.,4., 5.])
 x2 = random.normal(key1, (5,))
 W1 = random.normal(key, (3,3))
 W2 = random.normal(key1, (3,3))
@@ -65,11 +66,11 @@ print(DP_pd(x2))
 
 
 # Check if the inv(D2P) match the closed form.
-print(inv_D2P_pd(W1)(np.identity(W1.shape[0])))
-print(np.linalg.matrix_power(W1,2).T)
+print(inv_D2P_pd(W1)(jnp.identity(W1.shape[0])))
+print(jnp.linalg.matrix_power(W1,2).T)
 
 print(inv_D2P_pd(x2)(x1))
-print(np.dot(np.diag(x2),x1))
+print(jnp.dot(jnp.diag(x2),x1))
 
 
 # cmd main algorithm test with single variables, scalar example from cmd paper
@@ -166,55 +167,55 @@ print(new_state)
 # cmd main algorithm test with structured variables, vector example from RRL paper
 # using the sampling functions from RRL repository.
 # The min player has two variables, K and Lambda. The max player has a single variable L.
-"""
+
 # Problem Parameters
-A = np.array([[1,1],[0,1]])
-B = np.array([[0],[1]])
-C = np.array([[0.5],[1]])
+A = jnp.array([[1,1],[0,1]])
+B = jnp.array([[0],[1]])
+C = jnp.array([[0.5],[1]])
 nx,nu = B.shape
 _,nw = C.shape
 T = 15
-Ru = np.eye(nu)
-Rw = 20*np.eye(nw)
-Q = np.eye(nx)
+Ru = jnp.eye(nu)
+Rw = 20*jnp.eye(nw)
+Q = jnp.eye(nx)
 q = 0.01
-e,_ = np.linalg.eig(Q)
-l_max = (np.min(e) - q) / Rw
+e,_ = jnp.linalg.eig(Q)
+l_max = (jnp.min(e) - q) / Rw
 safeguard = 2
 
 
 # Bregmen Potential definitions
 def D2P_l2(v):
     return lambda x: x
-breg_min = BregmanPotential([lambda x: x, DP_pd], [lambda x: x, DP_inv_pd], [D2P_l2, D2P_pd], [D2P_l2, inv_D2P_pd])
+breg_min = BregmanPotential((lambda x: x, DP_pd), (lambda x: x, DP_inv_pd), (D2P_l2, D2P_pd), (D2P_l2, inv_D2P_pd))
 
 # Initialization of variables
-K = 0.01 * random.normal(key1, (nu, nx))
-Lambda = 0.01 * random.normal(key1, (nx, nx))
-Lambda = np.eye(nx)+ Lambda + Lambda.T
+K = 0.001 * random.normal(key1, (nu, nx))
+Lambda = 0.001 * random.normal(key1, (nx, nx))
+Lambda = jnp.eye(nx)+ Lambda + Lambda.T
 Lambda = proj(Lambda,2)
 
-x = [K, Lambda] # min player
+x = (K, Lambda) # min player
 y = 0.01 * random.normal(key, (nu, nx)) # max player L
-dual_x = [K, DP_pd(Lambda)]
+dual_x = (K, DP_pd(Lambda))
 dual_y = y
 prev_state = CMDState(x, y, dual_x, dual_y)
 
-# Get gradients and hessians
-print("-- about to compute gradients --")
-DK,DL,DKL = gradient(50,100,A,B,C,Q,Ru,Rw,prev_state.minPlayer[0],y,T)
-print("--done with gradient computation--")
-DfLambda = Df_lambda(prev_state.minPlayer[1],y,Q,q,Rw,nx)
-DfL = Df_L(prev_state.minPlayer[1],y,Q,q,Rw,nx)
-DfLambdaL = Df_lambda_L(prev_state.minPlayer[1],y,Q,q,Rw,nx)
-DfLLambda = Df_L_lambda(prev_state.minPlayer[1],y,Q,q,Rw,nx)
-
-grad_max = DL + DfL
-grad_min = [DK, DfLambda]
-# hessian_xy = lambda v: [np.matmul(DKL, v.T).T, np.tensordot(DfLambdaL, DL)]
+# # Get gradients and hessians
+# print("-- about to compute gradients --")
+# DK,DL,DKL = gradient(50,100,A,B,C,Q,Ru,Rw,prev_state.minPlayer[0],y,T)
+# print("--done with gradient computation--")
+# DfLambda = Df_lambda(prev_state.minPlayer[1],y,Q,q,Rw,nx)
+# DfL = Df_L(prev_state.minPlayer[1],y,Q,q,Rw,nx)
+# DfLambdaL = Df_lambda_L(prev_state.minPlayer[1],y,Q,q,Rw,nx)
+# DfLLambda = Df_L_lambda(prev_state.minPlayer[1],y,Q,q,Rw,nx)
+#
+# grad_max = DL + DfL
+# grad_min = (DK, DfLambda)
+# # hessian_xy = lambda v: [np.matmul(DKL, v.T).T, np.tensordot(DfLambdaL, DL)]
 def hessian_xy_generator(DKL,DfLambdaL):
     def hessian_xy(max_tree):
-        return [np.matmul(DKL, max_tree.T).T, np.tensordot(DfLambdaL, max_tree)] # returns minPlayer structure
+        return (np.matmul(DKL, max_tree.T).T, np.tensordot(DfLambdaL, max_tree)) # returns minPlayer structure
     return hessian_xy
 
 # hessian_yx = lambda K_var,Lambda_var : np.matmul(DKL.T,K_var.T).T + np.tensordot(DfLLambda,Lambda_var)
@@ -233,10 +234,81 @@ minPlayer_list_2 = [prev_state.minPlayer[0][0][1]]
 maxPlayer_list_1 = [prev_state.maxPlayer[0][0]]
 maxPlayer_list_2 = [prev_state.maxPlayer[0][1]]
 
+# @jit
+# def jit_cmd(prev_state):
+#     DK, DL, DKL= gradient(50, 100, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], prev_state.maxPlayer, T)
+#     DfLambda = Df_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+#     DfL = Df_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+#     DfLambdaL = Df_lambda_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+#     DfLLambda = Df_L_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+#     grad_max = DL + DfL
+#     grad_min = (DK, DfLambda)
+#
+#     delta = updates(prev_state, 2e-4, 4e-3, hessian_xy_generator(DKL, DfLambdaL),
+#             hessian_yx_generator(DKL, DfLLambda), grad_min, grad_max, breg_min)
+#     return cmd_step(prev_state, delta, breg_min)
 
-for t in range(2000):
-    delta = updates(prev_state, 2e-5, 2e-5, hessian_xy_generator(DKL,DfLambdaL), hessian_yx_generator(DKL,DfLLambda), grad_min, grad_max, breg_min)
-    new_state = cmd_step(prev_state, delta, breg_min)
+eta_x = 1e-4
+eta_y = 1e-3
+
+# @jit
+def jit_cmd(prev_state, DK, DL, DKL):
+    def hessian_xy_generator(DKL, DfLambdaL):
+        def hessian_xy(max_tree):
+            # print('hessian_xy called!')
+            return (np.matmul(DKL, max_tree.T).T,
+                    np.tensordot(DfLambdaL, max_tree))  # returns minPlayer structure
+
+        return hessian_xy
+
+    # hessian_yx = lambda K_var,Lambda_var : np.matmul(DKL.T,K_var.T).T + np.tensordot(DfLLambda,Lambda_var)
+    def hessian_yx_generator(DKL, DfLLambda):
+        def hessian_yx(min_tree):
+            K_var = min_tree[0]
+            Lambda_var = min_tree[1]
+            # print('hessian_yx called!')
+            return np.matmul(DKL.T, K_var.T).T + np.tensordot(DfLLambda,
+                                                              Lambda_var)  # returns maxPlayer structure
+
+        return hessian_yx
+
+    DfLambda = Df_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    DfL = Df_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    DfLambdaL = Df_lambda_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    DfLLambda = Df_L_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    grad_max = DL + DfL
+    grad_min = (DK, DfLambda)
+
+    delta = updates(prev_state, eta_x, eta_y, hessian_xy_generator(DKL, DfLambdaL),
+            hessian_yx_generator(DKL, DfLLambda), grad_min, grad_max, breg_min=breg_min,
+                    precond_b_min=False, precond_b_max=False)
+    return cmd_step(prev_state, delta, breg_min=breg_min), delta, grad_min
+# ----------------------------------------------
+
+infile = open('state_list.pkl','rb')
+state_list = pickle.load(infile)
+infile.close()
+prev_state = state_list[-1]
+prev_state = jax.tree_map(lambda x:jnp.float64(x), prev_state)
+
+print('------brgin-------- starting with: ', prev_state)
+for t in range(3000):
+    # print("-- about to compute gradients --")
+    # DK, DL, DKL = jit_gradient(prev_state) #gradient(50, 100, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], y, T)
+    # print("--done with gradient computation--")
+    # DfLambda = Df_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    # DfL = Df_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    # DfLambdaL = Df_lambda_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    # DfLLambda = Df_L_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    # grad_max = DL + DfL
+    # grad_min = (DK, DfLambda)
+    # delta = jit_updates(prev_state, DKL, DfLambdaL, DfLLambda, grad_min, grad_max) #updates(prev_state, 2e-5, 2e-5, hessian_xy_generator(DKL,DfLambdaL), hessian_yx_generator(DKL,DfLLambda), grad_min, grad_max, breg_min)
+
+
+    DK, DL, DKL= gradient(50, 200, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], prev_state.maxPlayer, T)
+    new_state,del_, grad_min = jit_cmd(prev_state, DK, DL, DKL)
+
+
 
     # Saving data
     state_list.append(new_state)
@@ -245,10 +317,12 @@ for t in range(2000):
     maxPlayer_list_1.append( new_state.maxPlayer[0][0])
     maxPlayer_list_2.append(new_state.maxPlayer[0][1])
 
-    if t%20 ==0:
+    if t%1 ==0:
         print("-------------------",t,"---------------")
-        print(prev_state)
-        print(new_state)
+        print("K ",new_state.minPlayer[0])
+        # print('grad_min ', grad_min)
+        print('delta_min ', del_.del_min)
+        print("L ", new_state.maxPlayer)
         np.save("minPlayer_list_1",minPlayer_list_1)
         np.save("minPlayer_list_2",minPlayer_list_2)
         np.save("maxPlayer_list_1",maxPlayer_list_1)
@@ -260,20 +334,33 @@ for t in range(2000):
 
     prev_state = new_state
 
-    print("-- about to compute gradients --")
-    DK, DL, DKL = gradient(50, 100, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], y, T)
-    print("--done with gradient computation--")
-    DfLambda = Df_lambda(prev_state.minPlayer[1], y, Q, q, Rw, nx)
-    DfL = Df_L(prev_state.minPlayer[1], y, Q, q, Rw, nx)
-    DfLambdaL = Df_lambda_L(prev_state.minPlayer[1], y, Q, q, Rw, nx)
-    DfLLambda = Df_L_lambda(prev_state.minPlayer[1], y, Q, q, Rw, nx)
-    grad_max = DL + DfL
-    grad_min = [DK, DfLambda]
 
-print(prev_state)
+
 print(new_state)
-"""
 
+
+
+p1 = plt.figure(1)
+plt.subplot(121)
+plt.plot(minPlayer_list_1,label = 'CMD')
+plt.legend()
+
+plt.subplot(122)
+plt.plot(minPlayer_list_2,label = 'CMD')
+plt.legend()
+plt.title('K')
+
+p2 = plt.figure(2)
+plt.subplot(121)
+plt.plot(maxPlayer_list_1, label = 'CMD')
+plt.legend()
+
+
+plt.subplot(122)
+plt.plot(maxPlayer_list_2,label = 'CMD')
+plt.title('L')
+plt.legend()
+plt.show()
 
 # # Test lagrangian making portion, works!
 # def obj_func(x, y):
@@ -292,7 +379,7 @@ print(new_state)
 
 
 
-
+"""
 horizon = 10                              # how many unit time we simulate for
 num_control_intervals = 20                # how many intervals of control
 step_size = horizon/num_control_intervals # how long to hold each control value
@@ -397,4 +484,4 @@ for i in range(200):
         print("---------------",i,"------------")
         print(lagrangian(new_state.minPlayer, new_state.maxPlayer))
 print(new_state.minPlayer)
-
+"""
