@@ -4,7 +4,7 @@ import operator
 import jax
 import jax.numpy as np
 
-from fax import linalg
+from jax.scipy.sparse import linalg
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0, 3, 4))
