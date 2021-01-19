@@ -130,33 +130,29 @@ def make_pd_bregman(step_size=1e-5):
     return BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
 
 
-def make_bound_breg(lb=-1.0, ub=1.0):
-    def breg_bound_internal(lb, ub, *args, **kwargs):
-        return lambda vec: jnp.sum(
-            (- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb))
+def make_bound_breg(lb=jnp.array([-1.0]), ub=jnp.array([1.0])):
+    def breg_bound_internal(vec):
+        assert vec.shape == lb.shape, "lower bound shape does not match variable shape!"
+        assert vec.shape == ub.shape, "upper bound shape does not match variable shape!"
+        return jnp.sum((- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb), axis=-1)
 
-    def DP_bound_internal(lb, ub):
-        return jax.grad(breg_bound_internal(lb, ub))
+    DP_bound_internal = jax.grad(breg_bound_internal)
 
-    def DP_inv_bound_internal(lb, ub):
-        return lambda vec: (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
+    def DP_inv_bound_internal(vec):
+        return (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
 
-    def D2P_bound_internal(lb, ub):
-        def out(vec):
-            return lambda u: jvp(DP_bound_internal(lb, ub), (vec,), (u,))[1]
+    def D2P_bound_internal(vec):
+        return lambda u: jvp(DP_bound_internal, (vec,), (u,))[1]
 
-        return out
+    def inv_D2P_bound_internal(vec):
+        if len(jnp.shape(vec)) >= 1:
+            return lambda u: jnp.dot(jnp.diag(1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
+        else:
+            return lambda u: (1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
 
-    def inv_D2P_bound_internal(lb, ub):
-        def out(vec):
-            if len(jnp.shape(vec)) <= 1:
-                return lambda u: jnp.dot(jnp.diag(1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
-            else:
-                return lambda u: (1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
-        return out
 
-    return BregmanPotential(DP_bound_internal(lb, ub), DP_inv_bound_internal(lb, ub),
-                            D2P_bound_internal(lb, ub), inv_D2P_bound_internal(lb, ub))
+    return BregmanPotential(DP_bound_internal, DP_inv_bound_internal,
+                            D2P_bound_internal, inv_D2P_bound_internal)
 
 
 # usage: hessian_xy((min_P,max_P))(max_P)

@@ -1,5 +1,6 @@
 import jax.numpy as np
 from jax import random, grad, jacfwd
+from cmd import make_pd_bregman
 import jaxlib
 from jax.scipy import linalg
 from cmd_helper import DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd
@@ -10,8 +11,9 @@ import jax.ops
 import pickle
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-
+from jax import grad, jacrev
 import jax
+from jax import jvp
 import jax.numpy as jnp
 from jax import jit, vmap, lax
 print(jax.__version__)
@@ -72,6 +74,54 @@ print(jnp.linalg.matrix_power(W1,2).T)
 print(inv_D2P_pd(x2)(x1))
 print(jnp.dot(jnp.diag(x2),x1))
 
+
+
+
+
+def make_bound_breg_original(lb=-1.0, ub=1.0):
+
+    def breg_bound_internal(lb, ub, *args, **kwargs):
+        return lambda vec: jnp.sum(
+            (- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb))
+
+    def DP_bound_internal(lb, ub):
+        return jax.grad(breg_bound_internal(lb, ub))
+
+    def DP_inv_bound_internal(lb, ub):
+        return lambda vec: (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
+
+    def D2P_bound_internal(lb, ub):
+        def out(vec):
+            return lambda u: jvp(DP_bound_internal(lb, ub), (vec,), (u,))[1]
+
+        return out
+
+    def inv_D2P_bound_internal(lb, ub):
+        def out(vec):
+            if len(jnp.shape(vec)) <= 1:
+                return lambda u: jnp.dot(jnp.diag(1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
+            else:
+                return lambda u: (1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
+        return out
+
+    return BregmanPotential(DP_bound_internal(lb, ub), DP_inv_bound_internal(lb, ub),
+                            D2P_bound_internal(lb, ub), inv_D2P_bound_internal(lb, ub))
+
+bregman_potential = make_bound_breg()
+bregman_potential_original = make_bound_breg_original()
+x = random.normal(key1)
+assert bregman_potential.DP(jnp.array([x])) == bregman_potential_original.DP(jnp.array([x])), "DP not matching!"
+assert bregman_potential.DP_inv(jnp.array([x])) == bregman_potential_original.DP_inv(jnp.array([x])), "DP_inv not matching!"
+assert bregman_potential.D2P(jnp.array([x]))(jnp.array([1.2345])) == bregman_potential_original.D2P(jnp.array([x]))(jnp.array([1.2345])), "D2P not matching!"
+assert bregman_potential.inv_D2P(jnp.array([x]))(jnp.array([1.2345])) == bregman_potential_original.inv_D2P(jnp.array([x]))(jnp.array([1.2345])), "D2P not matching!"
+
+lb = -1.0 * jnp.ones((5,))
+ub = 1.0 * jnp.ones((5,))
+bregman_potential = make_bound_breg(lb,ub)
+bregman_potential_original = make_bound_breg_original(lb,ub)
+
+print(bregman_potential_original.DP(x2))
+print(bregman_potential.DP(x2))
 
 # cmd main algorithm test with single variables, scalar example from cmd paper
 """"
@@ -167,7 +217,7 @@ print(new_state)
 # cmd main algorithm test with structured variables, vector example from RRL paper
 # using the sampling functions from RRL repository.
 # The min player has two variables, K and Lambda. The max player has a single variable L.
-
+"""
 # Problem Parameters
 A = jnp.array([[1,1],[0,1]])
 B = jnp.array([[0],[1]])
@@ -251,7 +301,7 @@ maxPlayer_list_2 = [prev_state.maxPlayer[0][1]]
 eta_x = 1e-4
 eta_y = 1e-3
 
-# @jit
+@jit
 def jit_cmd(prev_state, DK, DL, DKL):
     def hessian_xy_generator(DKL, DfLambdaL):
         def hessian_xy(max_tree):
@@ -283,16 +333,28 @@ def jit_cmd(prev_state, DK, DL, DKL):
             hessian_yx_generator(DKL, DfLLambda), grad_min, grad_max, breg_min=breg_min,
                     precond_b_min=False, precond_b_max=False)
     return cmd_step(prev_state, delta, breg_min=breg_min), delta, grad_min
+
+
+
+def P(Lambda, nx):
+    Lambda = np.reshape(Lambda, (nx, nx))
+    # return np.trace(np.dot(Lambda_stack,LA.logm(Lambda_stack)))
+    sign, logdet = jax.numpy.linalg.slogdet(Lambda)
+    return -logdet + 0.5 * (jax.numpy.linalg.norm(Lambda, 'fro')) ** 2  # + 0.5*(np.linalg.norm(K,'fro'))**2
+
+
+DP = grad(P)
+D2P = jacrev(DP)
 # ----------------------------------------------
 
-infile = open('state_list.pkl','rb')
-state_list = pickle.load(infile)
-infile.close()
-prev_state = state_list[-1]
-prev_state = jax.tree_map(lambda x:jnp.float64(x), prev_state)
+# infile = open('state_list.pkl','rb')
+# state_list = pickle.load(infile)
+# infile.close()
+# prev_state = state_list[-1]
+# prev_state = jax.tree_map(lambda x: jnp.float64(x), prev_state)
 
-print('------brgin-------- starting with: ', prev_state)
-for t in range(3000):
+print('------begin-------- starting with: ', prev_state)
+for t in range(2000):
     # print("-- about to compute gradients --")
     # DK, DL, DKL = jit_gradient(prev_state) #gradient(50, 100, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], y, T)
     # print("--done with gradient computation--")
@@ -305,8 +367,69 @@ for t in range(3000):
     # delta = jit_updates(prev_state, DKL, DfLambdaL, DfLLambda, grad_min, grad_max) #updates(prev_state, 2e-5, 2e-5, hessian_xy_generator(DKL,DfLambdaL), hessian_yx_generator(DKL,DfLLambda), grad_min, grad_max, breg_min)
 
 
-    DK, DL, DKL= gradient(50, 200, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], prev_state.maxPlayer, T)
-    new_state,del_, grad_min = jit_cmd(prev_state, DK, DL, DKL)
+    DK, DL, DKL= gradient(50, 250, A, B, C, Q, Ru, Rw, prev_state.minPlayer[0], prev_state.maxPlayer, T)
+    # new_state,del_, grad_min = jit_cmd(prev_state, DK, DL, DKL)
+
+    # ------------without CMD package, hand compute everything--------
+    DfLambda = Df_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    DfL = Df_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    DfLambdaL = Df_lambda_L(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    DfLLambda = Df_L_lambda(prev_state.minPlayer[1], prev_state.maxPlayer, Q, q, Rw, nx)
+    grad_max = DL + DfL
+    grad_min = (DK, DfLambda)
+
+
+
+    x = jnp.vstack((prev_state.minPlayer[0].T, prev_state.minPlayer_dual[1].reshape(4, 1)))
+    y = prev_state.maxPlayer
+
+    DflL = DfLambdaL.reshape((nx ** 2, nx))
+    Dlambda = DfLambda
+
+    Dx = np.vstack((DK.reshape((nx, nu)), Dlambda.reshape(nx ** 2, 1)))
+    Dy = DL + DfL
+    Dy = Dy.T
+
+    grad_min = (DK.reshape((nx, nu)), Dlambda)  # todo: check nu==1
+    grad_max = Dy
+
+
+
+
+    Dxy = np.vstack((DKL, DflL))
+    Dyx = Dxy.T
+    hessian = jax.scipy.linalg.block_diag(np.eye(nx), D2P(Lambda, nx).reshape((nx ** 2, nx ** 2)))
+    hessian_inv = np.linalg.inv(hessian)
+
+    Jx = np.linalg.inv(1 / eta_x * hessian + eta_y * np.matmul(Dxy, Dyx))
+    Jy = np.linalg.inv(1 / eta_y * np.eye(nx) + eta_x * np.matmul(np.matmul(Dyx, hessian_inv), Dxy))
+    del_x = -np.matmul(Jx, (Dx + eta_y * np.matmul(np.matmul(Dxy, np.eye(nx)), Dy)))
+    del_y = np.matmul(Jy, (Dy - eta_x * np.matmul(np.matmul(Dyx, hessian_inv), Dx)))
+
+    x = x + hessian @ del_x
+    y = y + del_y.T
+
+    # Reassignment from dual variable to primal variables PRIMAL
+    K = x[0:nx, 0].T  # first nx elements are K
+    K = np.minimum(np.maximum(K, -safeguard), safeguard)
+    K = K.reshape((nu, nx))
+    dual_l = x[nx:, 0].reshape((nx, nx))
+    dual_l = (dual_l + dual_l.T) / 2
+    # dual_l = dual_l.reshape((nx ** 2, 1))
+    Lambda = make_pd_bregman().DP_inv(dual_l)  # get primal Lambda from the dual update
+
+
+    # -------------------------- safe guard -----------------
+    # K =  jnp.minimum(jnp.maximum(new_state.minPlayer[0], -safeguard), safeguard)
+    # new_state = CMDState((K, new_state.minPlayer[1]), new_state.maxPlayer,
+    #                      _tree_apply(breg_min.DP,(K, new_state.minPlayer[1])) ,new_state.maxPlayer_dual)
+
+    K = jnp.minimum(jnp.maximum(K, -safeguard), safeguard)
+    new_state = CMDState((K, Lambda), y ,(K,dual_l) ,y)
+
+
+
+
 
 
 
@@ -317,18 +440,19 @@ for t in range(3000):
     maxPlayer_list_1.append( new_state.maxPlayer[0][0])
     maxPlayer_list_2.append(new_state.maxPlayer[0][1])
 
-    if t%1 ==0:
+    if t%20 ==0:
         print("-------------------",t,"---------------")
         print("K ",new_state.minPlayer[0])
         # print('grad_min ', grad_min)
-        print('delta_min ', del_.del_min)
+        # print('delta_min ', del_.del_min)
         print("L ", new_state.maxPlayer)
+        # print('delta_max ', del_.del_max)
         np.save("minPlayer_list_1",minPlayer_list_1)
         np.save("minPlayer_list_2",minPlayer_list_2)
         np.save("maxPlayer_list_1",maxPlayer_list_1)
         np.save("maxPlayer_list_2",maxPlayer_list_2)
 
-        with open('state_list.pkl', 'wb') as f:
+        with open('state_list_hand.pkl', 'wb') as f:
             pickle.dump(state_list, f)
 
 
@@ -361,6 +485,7 @@ plt.plot(maxPlayer_list_2,label = 'CMD')
 plt.title('L')
 plt.legend()
 plt.show()
+"""
 
 # # Test lagrangian making portion, works!
 # def obj_func(x, y):
