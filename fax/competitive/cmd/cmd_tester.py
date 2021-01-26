@@ -107,20 +107,58 @@ def make_bound_breg_original(lb=-1.0, ub=1.0):
     return BregmanPotential(DP_bound_internal(lb, ub), DP_inv_bound_internal(lb, ub),
                             D2P_bound_internal(lb, ub), inv_D2P_bound_internal(lb, ub))
 
-bregman_potential = make_bound_breg()
-bregman_potential_original = make_bound_breg_original()
+
+
+def make_bound_breg_vector_original_unscaled(lb=jnp.array([-1.0]), ub=jnp.array([1.0])):
+    def breg_bound_internal(vec):
+        assert vec.shape == lb.shape, "lower bound shape does not match variable shape!"
+        assert vec.shape == ub.shape, "upper bound shape does not match variable shape!"
+        return jnp.sum((- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb), axis=-1)
+
+    DP_bound_internal = jax.grad(breg_bound_internal)
+
+    def DP_inv_bound_internal(vec):
+        return (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
+
+    def D2P_bound_internal(vec):
+        return lambda u: jvp(DP_bound_internal, (vec,), (u,))[1]
+
+    def inv_D2P_bound_internal(vec):
+        if len(jnp.shape(vec)) >= 1:
+            return lambda u: jnp.dot(jnp.diag(1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
+        else:
+            return lambda u: (1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
+
+
+    return BregmanPotential(DP_bound_internal, DP_inv_bound_internal,
+                            D2P_bound_internal, inv_D2P_bound_internal)
+
+
 x = random.normal(key1)
-assert bregman_potential.DP(jnp.array([x])) == bregman_potential_original.DP(jnp.array([x])), "DP not matching!"
-assert bregman_potential.DP_inv(jnp.array([x])) == bregman_potential_original.DP_inv(jnp.array([x])), "DP_inv not matching!"
-assert bregman_potential.D2P(jnp.array([x]))(jnp.array([1.2345])) == bregman_potential_original.D2P(jnp.array([x]))(jnp.array([1.2345])), "D2P not matching!"
-assert bregman_potential.inv_D2P(jnp.array([x]))(jnp.array([1.2345])) == bregman_potential_original.inv_D2P(jnp.array([x]))(jnp.array([1.2345])), "D2P not matching!"
+eta = jnp.array([1e-2])
+
+bregman_potential = make_bound_breg(step_size=eta)
+bregman_potential_original = make_bound_breg_vector_original_unscaled() #make_bound_breg_original()
+assert bregman_potential.DP(jnp.array([x])) == 1/eta* bregman_potential_original.DP(jnp.array([x])), "DP not matching!"
+assert bregman_potential.DP_inv(jnp.array([x])) == bregman_potential_original.DP_inv(eta* jnp.array([x])), "DP_inv not matching!"
+assert jnp.isclose(bregman_potential.D2P(jnp.array([x]))(jnp.array([1.2345])) , 1/eta * bregman_potential_original.D2P(jnp.array([x]))(jnp.array([1.2345]))), "D2P not matching!"
+assert jnp.isclose(bregman_potential.inv_D2P(jnp.array([x]))(jnp.array([1.2345])) , eta* bregman_potential_original.inv_D2P(jnp.array([x]))(jnp.array([1.2345]))), "D2P not matching!"
 
 lb = -1.0 * jnp.ones((5,))
 ub = 1.0 * jnp.ones((5,))
-bregman_potential = make_bound_breg(lb,ub)
+# eta = jnp.array([1e-2,2e-3,7e-1,4e-4,3e-2])
+eta = 1.234e-2
+vector_eta = eta * jnp.ones((5,))
+bregman_potential = make_bound_breg(lb,ub, vector_eta)
 bregman_potential_original = make_bound_breg_original(lb,ub)
 
-print(bregman_potential_original.DP(x2))
+assert jnp.isclose(bregman_potential.DP(x2) , 1/eta * bregman_potential_original.DP(x2)).all(), "DP not matching!"
+assert jnp.isclose(bregman_potential.DP_inv(x2) , bregman_potential_original.DP_inv(eta* x2)).all(), "DP_inv not matching!"
+assert jnp.isclose(bregman_potential.D2P(x2)(x2) , 1/eta * bregman_potential_original.D2P(x2)(x2)).all(), "D2P not matching!"
+assert jnp.isclose(bregman_potential.inv_D2P(x2)(x2) , eta* bregman_potential_original.inv_D2P(x2)(x2)).all(), "D2P not matching!"
+
+
+print(1 / eta * bregman_potential_original.DP(x2))
 print(bregman_potential.DP(x2))
 
 # cmd main algorithm test with single variables, scalar example from cmd paper

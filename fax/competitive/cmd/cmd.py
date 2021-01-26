@@ -130,15 +130,18 @@ def make_pd_bregman(step_size=1e-5):
     return BregmanPotential(DP_pd, DP_inv_pd, D2P_pd, inv_D2P_pd)
 
 
-def make_bound_breg(lb=jnp.array([-1.0]), ub=jnp.array([1.0])):
+def make_bound_breg(lb=jnp.array([-1.0]), ub=jnp.array([1.0]), step_size = jnp.array([1e-4])):
+
     def breg_bound_internal(vec):
         assert vec.shape == lb.shape, "lower bound shape does not match variable shape!"
         assert vec.shape == ub.shape, "upper bound shape does not match variable shape!"
-        return jnp.sum((- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb), axis=-1)
+        assert step_size.shape == vec.shape, "eta_ shape does not match variable shape!"
+        return jnp.sum( 1./step_size * ((- vec + ub) * jnp.log(- vec + ub) + (vec - lb) * jnp.log(vec - lb)), axis=-1)
 
     DP_bound_internal = jax.grad(breg_bound_internal)
 
     def DP_inv_bound_internal(vec):
+        vec = step_size * vec
         return (ub * jnp.exp(vec) + lb) / (1 + jnp.exp(vec))
 
     def D2P_bound_internal(vec):
@@ -146,13 +149,14 @@ def make_bound_breg(lb=jnp.array([-1.0]), ub=jnp.array([1.0])):
 
     def inv_D2P_bound_internal(vec):
         if len(jnp.shape(vec)) >= 1:
-            return lambda u: jnp.dot(jnp.diag(1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
+            return lambda u: jnp.dot(jnp.diag( step_size * 1 / ((1 / (ub - vec)) + (1 / (vec - lb)))), u)
         else:
-            return lambda u: (1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
+            return lambda u: ( step_size * 1 / ((1 / (ub - vec)) + (1 / (vec - lb)))) * u
 
 
     return BregmanPotential(DP_bound_internal, DP_inv_bound_internal,
                             D2P_bound_internal, inv_D2P_bound_internal)
+
 
 
 # usage: hessian_xy((min_P,max_P))(max_P)
@@ -331,9 +335,9 @@ UpdateState = collections.namedtuple("UpdateState", "del_min del_max")
 _tree_apply = partial(jax.tree_multimap, lambda f, x: f(x))
 
 
-def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad_min=None,
-            grad_max=None, breg_min=default_breg, breg_max=default_breg, objective_func=None,
-            precond_b_min=True, precond_b_max=True):
+def updates(prev_state, hessian_xy=None, hessian_yx=None, grad_min=None,
+            grad_max=None, breg_min=default_breg, breg_max=default_breg, eta_min=1., eta_max=1., objective_func=None,
+            precond_b_min=False, precond_b_max=False):
     """Equation (4). Given current position (prev_state), compute the updates (del_x,del_y) to the players in cmd algorithm for next position.
 
     Args:
@@ -403,6 +407,7 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
     temp = hessian_xy(_tree_apply(_tree_apply(breg_max.inv_D2P, prev_state.maxPlayer), grad_max))
     temp2 = tree_util.tree_map(lambda x: eta_max * x, temp)
     vec_min = tree_util.tree_multimap(lambda arr1, arr2: arr1 + arr2, grad_min, temp2)
+
     if precond_b_min:
         # vec_min_tree, min_tree_def = tree_util.tree_flatten(vec_min)
         # cond_min = tree_util.tree_unflatten(min_tree_def,
@@ -411,12 +416,11 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         cond_min = max(jax.tree_map(lambda x: jnp.linalg.norm(x, jnp.inf), tree_util.tree_flatten(vec_min)[0]))
         vec_min = tree_util.tree_map(lambda x: x / cond_min, vec_min)
 
-
-
     # temp = _tree_apply(hessian_yx, _tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), grad_min))
     temp = hessian_yx(_tree_apply(_tree_apply(breg_min.inv_D2P, prev_state.minPlayer), grad_min))
     temp2 = tree_util.tree_map(lambda x: eta_min * x, temp)
     vec_max = tree_util.tree_multimap(lambda x, y: x - y, grad_max, temp2)
+
     if precond_b_max:
         # vec_max_tree, max_tree_def = tree_util.tree_flatten(vec_max)
         # cond_max = tree_util.tree_unflatten(max_tree_def,
@@ -426,14 +430,15 @@ def updates(prev_state, eta_min, eta_max, hessian_xy=None, hessian_yx=None, grad
         vec_max = tree_util.tree_map(lambda x: x / cond_max, vec_max)
 
 
-    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=1000, tol=1e-25)
+    update_min, status_min = linalg.cg(linear_opt_min, vec_min, maxiter=1000)
+
     if precond_b_min:
         update_min = tree_util.tree_map(lambda x: cond_min * x, update_min)
         # update_min = tree_util.tree_multimap(lambda x, y: y * x, cond_min, update_min)
 
-    update_min = tree_util.tree_map(lambda x: -x, update_min)
+    update_min = tree_util.tree_map(lambda x: -x, update_min) # negation here!
 
-    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=1000, tol=1e-25)
+    update_max, status_max = linalg.cg(linear_opt_max, vec_max, maxiter=1000)
     if precond_b_max:
         update_max = tree_util.tree_map(lambda x: cond_max * x, update_max)
         # update_max = tree_util.tree_multimap(lambda x, y: y * x, cond_max, update_max)
