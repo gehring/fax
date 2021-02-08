@@ -89,7 +89,7 @@ Citing competitive differentiation:
 
 ```
 @inproceedings{bacon2019optrl,
-  author={Pierre-Luc Bacon, Florian Schaefer, Clement Gehring, Animashree Anandkumar, Emma Brunskill},
+  author={Bacon, Pierre-Luc and Schafer, Florian and Gehring, Clement and Anandkumar, Animashree and Brunskill, Emma},
   title={A Lagrangian Method for Inverse Problems in Reinforcement Learning},
   booktitle={NeurIPS Optimization Foundations for Reinforcement Learning Workshop},
   year={2019},
@@ -102,7 +102,7 @@ Citing this repo:
 
 ```
 @misc{gehring2019fax,
-  author = {Clement Gehring, Pierre-Luc Bacon, Florian Schaefer},
+  author = {Gehring, Clement and Bacon, Pierre-Luc and Schaefer, Florian},
   title = {{FAX: differentiating fixed point problems in JAX}},
   note = {Available at: https://github.com/gehring/fax},
   year = {2019}
