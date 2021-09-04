@@ -72,7 +72,7 @@ def vector_DP_pd(v):
 
 def DP_pd(v):
     m = len(jnp.shape(v))
-    if m == 1:
+    if m <= 1:
         out = grad(lambda x: jnp.dot(x, jnp.log(x)))(v)
     else:
         out = grad(lambda M: -jnp.linalg.slogdet(M)[1])(v)
@@ -85,7 +85,7 @@ def vector_DP_inv_pd(v):
 
 def DP_inv_pd(v):
     m = len(jnp.shape(v))
-    if m == 1:
+    if m <= 1:
         out = vector_DP_inv_pd(v)
     else:
         out = -scipy_linalg.inv(v).T
@@ -94,7 +94,7 @@ def DP_inv_pd(v):
 
 def D2P_pd(v):
     m = len(jnp.shape(v))
-    if m == 1:
+    if m <= 1:
         def out(u):
             return hvp(vector_DP_pd, (v,), (u,))
     else:
@@ -105,7 +105,7 @@ def D2P_pd(v):
 
 def inv_D2P_pd(v):
     m = len(jnp.shape(v))
-    if m == 1:
+    if m <= 1:
         def out(u):
             return jnp.dot(jnp.diag(v), u)
     else:
