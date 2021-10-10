@@ -102,3 +102,8 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Python data files
+*.npy
+*.pkl
+*.pickle
